@@ -114,7 +114,7 @@ local function startFakeCast(frame, conf)
     if cb.Text then cb.Text:SetText("Preview Spell") end
     if cb.Icon then
         cb.Icon:SetTexture(136235)
-        cb.Icon:Show()
+        cb.Icon:SetShown(conf.castIconPosition ~= "hidden")
     end
     if cb.Shield then cb.Shield:Hide() end
 

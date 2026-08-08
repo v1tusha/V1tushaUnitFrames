@@ -40,6 +40,8 @@ local BAR_DEFAULTS = {
     showCastText = true,
 }
 
+local CAST_DEFAULTS = VUF.CAST_DEFAULTS  -- defined in Elements/CastBar.lua, which loads first
+
 local AURA_DEFAULTS = {
     buffSize = 22,
     buffSpacing = 2,
@@ -219,6 +221,27 @@ function VUF:GetUnitConfig(unit)
         showCastTime = settingOrDefault(db, "showCastTime", settingOrDefault(db, "showCastText", true)),
         castTextSize = (db and db.castTextSize) or 12,
         castTextAlign = (db and db.castTextAlign) or "left",
+        castColor = (db and db.castColor) or CAST_DEFAULTS.castColor,
+        channelColor = (db and db.channelColor) or CAST_DEFAULTS.channelColor,
+        notInterruptibleColor = (db and db.notInterruptibleColor) or CAST_DEFAULTS.notInterruptibleColor,
+        successColor = (db and db.successColor) or CAST_DEFAULTS.successColor,
+        interruptedColor = (db and db.interruptedColor) or CAST_DEFAULTS.interruptedColor,
+        latencyColor = (db and db.latencyColor) or CAST_DEFAULTS.latencyColor,
+        latencyAlpha = settingOrDefault(db, "latencyAlpha", CAST_DEFAULTS.latencyAlpha),
+        castHoldTime = settingOrDefault(db, "castHoldTime", CAST_DEFAULTS.castHoldTime),
+        castIconPosition = (db and db.castIconPosition) or CAST_DEFAULTS.castIconPosition,
+        castIconSize = settingOrDefault(db, "castIconSize", CAST_DEFAULTS.castIconSize),
+        showCastLatency = settingOrDefault(db, "showCastLatency", CAST_DEFAULTS.showCastLatency),
+        showCastShield = settingOrDefault(db, "showCastShield", CAST_DEFAULTS.showCastShield),
+        castReverse = settingOrDefault(db, "castReverse", CAST_DEFAULTS.castReverse),
+        castClassColor = settingOrDefault(db, "castClassColor", CAST_DEFAULTS.castClassColor),
+        castDetached = settingOrDefault(db, "castDetached", CAST_DEFAULTS.castDetached),
+        castWidth = settingOrDefault(db, "castWidth", CAST_DEFAULTS.castWidth),
+        castParent = (db and db.castParent) or ("V1tushaUnitFrames_" .. unit),
+        castAnchorFrom = (db and db.castAnchorFrom) or CAST_DEFAULTS.castAnchorFrom,
+        castAnchorTo = (db and db.castAnchorTo) or CAST_DEFAULTS.castAnchorTo,
+        castX = settingOrDefault(db, "castX", CAST_DEFAULTS.castX),
+        castY = settingOrDefault(db, "castY", CAST_DEFAULTS.castY),
         showName = not db or db.showName ~= false,
         showHealthText = not db or db.showHealthText ~= false,
         healthTextFormat = (db and db.healthTextFormat) or VUF:GetVisual("healthFormat"),
@@ -416,9 +439,7 @@ function VUF:ApplyUnitElements(unit)
         anchor = frame.AdditionalPower
     end
     if frame.Castbar and conf.showCastBar then
-        frame.Castbar:ClearAllPoints()
-        frame.Castbar:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -CASTBAR_GAP)
-        frame.Castbar:SetPoint("TOPRIGHT", anchor, "BOTTOMRIGHT", 0, -CASTBAR_GAP)
+        VUF:ApplyUnitCastBar(unit)
     end
 end
 
@@ -574,20 +595,6 @@ function VUF:ApplyUnitBars(unit)
         frame.Health:SetPoint("BOTTOM", frame.Power, "TOP", 0, BAR_GAP)
         if frame.Health.ForceUpdate then frame.Health:ForceUpdate() end
     end
-    if frame.Castbar then
-        frame.Castbar:SetHeight(conf.castHeight)
-        frame.Castbar.Icon:SetSize(conf.castHeight, conf.castHeight)
-        frame.Castbar.Icon:ClearAllPoints()
-        frame.Castbar.Icon:SetPoint("TOPRIGHT", frame.Castbar, "TOPLEFT", -2, 0)
-        frame.Castbar.Text:ClearAllPoints()
-        frame.Castbar.Text:SetPoint("LEFT", frame.Castbar, "LEFT", 4, 0)
-        frame.Castbar.Text:SetPoint("RIGHT", frame.Castbar, "RIGHT", conf.showCastTime and -40 or -4, 0)
-        frame.Castbar.Text:SetJustifyH(conf.castTextAlign == "center" and "CENTER" or "LEFT")
-        VUF:ApplyFont(frame.Castbar.Text, conf.castTextSize)
-        VUF:ApplyFont(frame.Castbar.Time, conf.castTextSize)
-        frame.Castbar.Text:SetShown(conf.showCastName)
-        frame.Castbar.Time:SetShown(conf.showCastTime)
-    end
     if frame.ClassPower then
         frame.ClassPower:ClearAllPoints()
         frame.ClassPower:SetPoint("TOPLEFT", frame, "BOTTOMLEFT", 0, -4)
@@ -602,14 +609,7 @@ function VUF:ApplyUnitBars(unit)
         frame.AdditionalPower:SetHeight(ALT_POWER_H)
     end
     VUF:ApplyUnitBarColours(unit)
-    if frame.Castbar then
-        frame.Castbar:ClearAllPoints()
-        local resource = conf.showAdditionalPower and frame.AdditionalPower
-            or hasVisibleClassPower(frame, conf) and frame.ClassPower
-            or frame
-        frame.Castbar:SetPoint("TOPLEFT", resource, "BOTTOMLEFT", 0, -CASTBAR_GAP)
-        frame.Castbar:SetPoint("TOPRIGHT", resource, "BOTTOMRIGHT", 0, -CASTBAR_GAP)
-    end
+    VUF:ApplyUnitCastBar(unit)
 end
 
 function VUF:ApplyUnitLayout(unit)

@@ -36,6 +36,17 @@ local function saveSnapshot(unit, frame)
     layout.x, layout.y = x or 0, y or 0
 end
 
+local function saveCastSnapshot(unit, cb)
+    local profile = VUF:GetProfileData()
+    local from, parent, to, x, y = cb:GetPoint(1)
+    if not from then return end
+    profile.units[unit] = profile.units[unit] or {}
+    local layout = profile.units[unit]
+    layout.castParent = parent and parent.GetName and parent:GetName() or "UIParent"
+    layout.castAnchorFrom, layout.castAnchorTo = from, to
+    layout.castX, layout.castY = x or 0, y or 0
+end
+
 function VUF:MoveUnitBy(unit, dx, dy)
     if InCombatLockdown() then return end
     local frame = VUF[unit:upper()]
@@ -53,11 +64,13 @@ function VUF:MoveUnitBy(unit, dx, dy)
     saveSnapshot(unit, frame)
 end
 
-function VUF:CreateMover(frame, unit)
-    if VUF.movers[unit] then return end
+function VUF:CreateMover(frame, key, label, save)
+    if VUF.movers[key] then return end
 
-    local m = CreateFrame("Button", "V1tushaUnitFramesMover_" .. unit, UIParent)
-    m.unit = unit
+    save = save or saveSnapshot
+
+    local m = CreateFrame("Button", "V1tushaUnitFramesMover_" .. key, UIParent)
+    m.unit = key
     m:SetAllPoints(frame)
     m:SetFrameStrata("TOOLTIP")
     m:SetMovable(true)
@@ -75,14 +88,14 @@ function VUF:CreateMover(frame, unit)
     edge(m, "TOPLEFT",     "BOTTOMLEFT",  "v", 1, 0.4, 0.8, 1.0, 0.9)
     edge(m, "TOPRIGHT",    "BOTTOMRIGHT", "v", 1, 0.4, 0.8, 1.0, 0.9)
 
-    local label = m:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    label:SetPoint("CENTER")
-    label:SetShadowOffset(1, -1)
-    label:SetText(UNIT_LABELS[unit] or unit)
+    local text = m:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    text:SetPoint("CENTER")
+    text:SetShadowOffset(1, -1)
+    text:SetText(label or UNIT_LABELS[key] or key)
 
-    local function stopDragging(self, save)
+    local function stopDragging(self, saveNow)
         self:SetScript("OnUpdate", nil)
-        if save then saveSnapshot(unit, frame) end
+        if saveNow then save(key, frame) end
         self.cursorX, self.cursorY = nil, nil
         self.frameX, self.frameY = nil, nil
         self.lastX, self.lastY = nil, nil
@@ -118,13 +131,32 @@ function VUF:CreateMover(frame, unit)
         stopDragging(self, not InCombatLockdown())
     end)
 
-    VUF.movers[unit] = m
+    VUF.movers[key] = m
+end
+
+-- Cast movers only exist while the bar is detached; attached bars follow the frame.
+function VUF:UpdateCastMover(unit, cb, detached)
+    local key = unit .. "Cast"
+    if detached and not VUF.movers[key] then
+        VUF:CreateMover(cb, key, (UNIT_LABELS[unit] or unit) .. " Cast", function(_, bar)
+            saveCastSnapshot(unit, bar)
+        end)
+    end
+
+    local m = VUF.movers[key]
+    if not m then return end
+    m.vufSkip = not detached
+    if not detached then
+        m:EnableMouse(false)
+        m:Hide()
+    end
 end
 
 local function setMoversShown(shown)
     for _, m in pairs(VUF.movers) do
-        m:EnableMouse(shown)
-        m:SetShown(shown)
+        local visible = shown and not m.vufSkip
+        m:EnableMouse(visible)
+        m:SetShown(visible)
     end
 end
 
@@ -167,7 +199,8 @@ function VUF:ResetUnitLayout(unit)
     for _, name in ipairs(units) do
         local saved = profile.units and profile.units[name]
         if saved then
-            for _, key in ipairs({ "parent", "anchorFrom", "anchorTo", "x", "y", "strata", "width", "height", "bossGrowth", "bossSpacing" }) do
+            for _, key in ipairs({ "parent", "anchorFrom", "anchorTo", "x", "y", "strata", "width", "height", "bossGrowth", "bossSpacing",
+                "castDetached", "castParent", "castAnchorFrom", "castAnchorTo", "castX", "castY", "castWidth" }) do
                 saved[key] = nil
             end
         end

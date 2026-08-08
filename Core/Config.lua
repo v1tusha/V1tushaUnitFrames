@@ -181,6 +181,17 @@ local function applySetting(unit, key, value, apply)
     end
 end
 
+local ANCHOR_POINTS = {
+    TOPLEFT = "Top Left", TOP = "Top", TOPRIGHT = "Top Right",
+    LEFT = "Left", CENTER = "Center", RIGHT = "Right",
+    BOTTOMLEFT = "Bottom Left", BOTTOM = "Bottom", BOTTOMRIGHT = "Bottom Right",
+}
+
+local PARENT_LIST = { UIParent = "UIParent" }
+for _, name in ipairs({ "player", "target", "focus", "pet", "targettarget", "focustarget" }) do
+    PARENT_LIST["V1tushaUnitFrames_" .. name] = name
+end
+
 local function addLayoutSettings(container, unit)
     local boss = isBoss(unit)
     local defaults = defaultsFor(unit)
@@ -221,15 +232,8 @@ local function addLayoutSettings(container, unit)
     end)
     container:AddChild(height)
 
-    local anchors = {
-        TOPLEFT = "Top Left", TOP = "Top", TOPRIGHT = "Top Right",
-        LEFT = "Left", CENTER = "Center", RIGHT = "Right",
-        BOTTOMLEFT = "Bottom Left", BOTTOM = "Bottom", BOTTOMRIGHT = "Bottom Right",
-    }
-    local parentList = { UIParent = "UIParent" }
-    for _, name in ipairs({ "player", "target", "focus", "pet", "targettarget", "focustarget" }) do
-        parentList["V1tushaUnitFrames_" .. name] = name
-    end
+    local anchors = ANCHOR_POINTS
+    local parentList = PARENT_LIST
     local strataList = {
         BACKGROUND = "Background", LOW = "Low", MEDIUM = "Medium", HIGH = "High",
         DIALOG = "Dialog", TOOLTIP = "Tooltip",
@@ -507,66 +511,282 @@ local function addBarsSettings(container, unit)
         container:AddChild(classPowerSpacer)
     end
 
-    if hasCastbar(unit) then
-        local castVisible = AceGUI:Create("CheckBox")
-        castVisible:SetLabel("Show Cast Bar")
-        castVisible:SetValue(getSaved(savedUnit, "showCastBar") ~= false)
-        castVisible:SetRelativeWidth(0.5)
-        castVisible:SetCallback("OnValueChanged", function(_, _, value)
-            applySetting(unit, "showCastBar", value, VUF.ApplyUnitElements)
-        end)
-        container:AddChild(castVisible)
+end
 
-        local castHeight = AceGUI:Create("Slider")
-        castHeight:SetLabel("Cast Bar Height")
-        castHeight:SetSliderValues(6, 40, 1)
-        castHeight:SetValue(getSaved(savedUnit, "castHeight") or 18)
-        castHeight:SetRelativeWidth(0.5)
-        castHeight:SetCallback("OnValueChanged", function(_, _, value)
-            applySetting(unit, "castHeight", math.floor(value), VUF.ApplyUnitBars)
-        end)
-        container:AddChild(castHeight)
 
-        local castName = AceGUI:Create("CheckBox")
-        castName:SetLabel("Show Spell Name")
-        local savedName = getSaved(savedUnit, "showCastName")
-        castName:SetValue(savedName == nil and getSaved(savedUnit, "showCastText") ~= false or savedName)
-        castName:SetRelativeWidth(0.5)
-        castName:SetCallback("OnValueChanged", function(_, _, value)
-            applySetting(unit, "showCastName", value, VUF.ApplyUnitBars)
-        end)
-        container:AddChild(castName)
+local function addCastSettings(container, unit)
+    local savedUnit = settingUnit(unit)
+    local defaults = VUF.CAST_DEFAULTS or {}
 
-        local castTime = AceGUI:Create("CheckBox")
-        castTime:SetLabel("Show Cast Time")
-        local savedTime = getSaved(savedUnit, "showCastTime")
-        castTime:SetValue(savedTime == nil and getSaved(savedUnit, "showCastText") ~= false or savedTime)
-        castTime:SetRelativeWidth(0.5)
-        castTime:SetCallback("OnValueChanged", function(_, _, value)
-            applySetting(unit, "showCastTime", value, VUF.ApplyUnitBars)
-        end)
-        container:AddChild(castTime)
-
-        local castTextSize = AceGUI:Create("Slider")
-        castTextSize:SetLabel("Cast Text Size")
-        castTextSize:SetSliderValues(8, 22, 1)
-        castTextSize:SetValue(getSaved(savedUnit, "castTextSize") or 12)
-        castTextSize:SetRelativeWidth(0.5)
-        castTextSize:SetCallback("OnValueChanged", function(_, _, value)
-            applySetting(unit, "castTextSize", math.floor(value), VUF.ApplyUnitBars)
-        end)
-        container:AddChild(castTextSize)
-
-        local castAlign = AceGUI:Create("Dropdown")
-        castAlign:SetLabel("Spell Name Alignment")
-        castAlign:SetList({ left = "Left", center = "Center" })
-        castAlign:SetValue(getSaved(savedUnit, "castTextAlign") or "left")
-        castAlign:SetRelativeWidth(0.5)
-        castAlign:SetCallback("OnValueChanged", function(_, _, value)
-            applySetting(unit, "castTextAlign", value, VUF.ApplyUnitBars)
-        end)
-        container:AddChild(castAlign)
+    local function addRow(parent, widget, width)
+        widget:SetRelativeWidth(width or 0.5)
+        parent:AddChild(widget)
     end
+
+    local function addColour(parent, label, key)
+        local colour = getSaved(savedUnit, key) or defaults[key] or { 1, 1, 1 }
+        local picker = AceGUI:Create("ColorPicker")
+        picker:SetLabel(label)
+        picker:SetColor(colour[1], colour[2], colour[3], 1)
+        picker:SetHasAlpha(false)
+        local function save(_, _, r, g, b)
+            applySetting(unit, key, { r, g, b }, VUF.ApplyUnitCastBar)
+        end
+        picker:SetCallback("OnValueChanged", save)
+        picker:SetCallback("OnValueConfirmed", save)
+        addRow(parent, picker)
+    end
+
+    local castVisible = AceGUI:Create("CheckBox")
+    castVisible:SetLabel("Show Cast Bar")
+    castVisible:SetValue(getSaved(savedUnit, "showCastBar") ~= false)
+    castVisible:SetCallback("OnValueChanged", function(_, _, value)
+        applySetting(unit, "showCastBar", value, VUF.ApplyUnitElements)
+    end)
+    addRow(container, castVisible)
+
+    local castHeight = AceGUI:Create("Slider")
+    castHeight:SetLabel("Cast Bar Height")
+    castHeight:SetSliderValues(6, 40, 1)
+    castHeight:SetValue(getSaved(savedUnit, "castHeight") or 18)
+    castHeight:SetCallback("OnValueChanged", function(_, _, value)
+        applySetting(unit, "castHeight", math.floor(value), VUF.ApplyUnitBars)
+    end)
+    addRow(container, castHeight)
+
+    local reverse = AceGUI:Create("CheckBox")
+    reverse:SetLabel("Fill Right to Left")
+    reverse:SetValue(getSaved(savedUnit, "castReverse") == true)
+    reverse:SetCallback("OnValueChanged", function(_, _, value)
+        applySetting(unit, "castReverse", value, VUF.ApplyUnitCastBar)
+    end)
+    addRow(container, reverse)
+
+    local holdTime = AceGUI:Create("Slider")
+    holdTime:SetLabel("Hold Time After Cast")
+    holdTime:SetSliderValues(0, 3, 0.1)
+    holdTime:SetValue(getSaved(savedUnit, "castHoldTime") or defaults.castHoldTime or 0.5)
+    holdTime:SetCallback("OnValueChanged", function(_, _, value)
+        applySetting(unit, "castHoldTime", value, VUF.ApplyUnitCastBar)
+    end)
+    addRow(container, holdTime)
+
+    local colours = AceGUI:Create("InlineGroup")
+    colours:SetTitle("Colours")
+    colours:SetLayout("Flow")
+    colours:SetFullWidth(true)
+    container:AddChild(colours)
+
+    addColour(colours, "Interruptible Cast", "castColor")
+    addColour(colours, "Channel", "channelColor")
+    addColour(colours, "Non-Interruptible", "notInterruptibleColor")
+    addColour(colours, "Cast Succeeded", "successColor")
+    addColour(colours, "Interrupted / Failed", "interruptedColor")
+
+    local classColour = AceGUI:Create("CheckBox")
+    classColour:SetLabel("Use Class Colour While Casting")
+    classColour:SetValue(getSaved(savedUnit, "castClassColor") == true)
+    classColour:SetCallback("OnValueChanged", function(_, _, value)
+        applySetting(unit, "castClassColor", value, VUF.ApplyUnitCastBar)
+    end)
+    addRow(colours, classColour)
+
+    local shield = AceGUI:Create("CheckBox")
+    shield:SetLabel("Show Non-Interruptible Shield")
+    shield:SetValue(getSaved(savedUnit, "showCastShield") ~= false)
+    shield:SetCallback("OnValueChanged", function(_, _, value)
+        applySetting(unit, "showCastShield", value, VUF.ApplyUnitCastBar)
+    end)
+    addRow(colours, shield)
+
+    local position = AceGUI:Create("InlineGroup")
+    position:SetTitle("Position")
+    position:SetLayout("Flow")
+    position:SetFullWidth(true)
+    container:AddChild(position)
+
+    local detached = AceGUI:Create("CheckBox")
+    detached:SetLabel("Detach From Frame")
+    detached:SetValue(getSaved(savedUnit, "castDetached") == true)
+    detached:SetCallback("OnValueChanged", function(_, _, value)
+        applySetting(unit, "castDetached", value, VUF.ApplyUnitCastBar)
+    end)
+    addRow(position, detached)
+
+    local castWidth = AceGUI:Create("Slider")
+    castWidth:SetLabel("Width (0 = match frame)")
+    castWidth:SetSliderValues(0, 800, 1)
+    castWidth:SetValue(getSaved(savedUnit, "castWidth") or defaults.castWidth or 0)
+    castWidth:SetCallback("OnValueChanged", function(_, _, value)
+        applySetting(unit, "castWidth", math.floor(value), VUF.ApplyUnitCastBar)
+    end)
+    addRow(position, castWidth)
+
+    if not isBoss(unit) then
+        local castParent = AceGUI:Create("Dropdown")
+        castParent:SetLabel("Anchor To Frame")
+        castParent:SetList(PARENT_LIST)
+        castParent:SetValue(getSaved(savedUnit, "castParent") or ("V1tushaUnitFrames_" .. savedUnit))
+        castParent:SetCallback("OnValueChanged", function(_, _, value)
+            applySetting(unit, "castParent", value, VUF.ApplyUnitCastBar)
+        end)
+        addRow(position, castParent, 1)
+    end
+
+    local castFrom = AceGUI:Create("Dropdown")
+    castFrom:SetLabel("Anchor From")
+    castFrom:SetList(ANCHOR_POINTS)
+    castFrom:SetValue(getSaved(savedUnit, "castAnchorFrom") or defaults.castAnchorFrom or "TOP")
+    castFrom:SetCallback("OnValueChanged", function(_, _, value)
+        applySetting(unit, "castAnchorFrom", value, VUF.ApplyUnitCastBar)
+    end)
+    addRow(position, castFrom)
+
+    local castTo = AceGUI:Create("Dropdown")
+    castTo:SetLabel("Anchor To")
+    castTo:SetList(ANCHOR_POINTS)
+    castTo:SetValue(getSaved(savedUnit, "castAnchorTo") or defaults.castAnchorTo or "BOTTOM")
+    castTo:SetCallback("OnValueChanged", function(_, _, value)
+        applySetting(unit, "castAnchorTo", value, VUF.ApplyUnitCastBar)
+    end)
+    addRow(position, castTo)
+
+    local castX = AceGUI:Create("Slider")
+    castX:SetLabel("X Offset")
+    castX:SetSliderValues(-2000, 2000, 1)
+    castX:SetValue(getSaved(savedUnit, "castX") or defaults.castX or 0)
+    castX:SetCallback("OnValueChanged", function(_, _, value)
+        applySetting(unit, "castX", math.floor(value), VUF.ApplyUnitCastBar)
+    end)
+    addRow(position, castX)
+
+    local castY = AceGUI:Create("Slider")
+    castY:SetLabel("Y Offset")
+    castY:SetSliderValues(-2000, 2000, 1)
+    castY:SetValue(getSaved(savedUnit, "castY") or defaults.castY or -4)
+    castY:SetCallback("OnValueChanged", function(_, _, value)
+        applySetting(unit, "castY", math.floor(value), VUF.ApplyUnitCastBar)
+    end)
+    addRow(position, castY)
+
+    local icons = AceGUI:Create("InlineGroup")
+    icons:SetTitle("Spell Icon")
+    icons:SetLayout("Flow")
+    icons:SetFullWidth(true)
+    container:AddChild(icons)
+
+    local iconPosition = AceGUI:Create("Dropdown")
+    iconPosition:SetLabel("Icon Position")
+    iconPosition:SetList({ left = "Left of Bar", right = "Right of Bar", hidden = "Hidden" })
+    iconPosition:SetValue(getSaved(savedUnit, "castIconPosition") or defaults.castIconPosition or "left")
+    iconPosition:SetRelativeWidth(0.5)
+    iconPosition:SetCallback("OnValueChanged", function(_, _, value)
+        applySetting(unit, "castIconPosition", value, VUF.ApplyUnitCastBar)
+    end)
+    icons:AddChild(iconPosition)
+
+    local iconSize = AceGUI:Create("Slider")
+    iconSize:SetLabel("Icon Size (0 = match bar height)")
+    iconSize:SetSliderValues(0, 48, 1)
+    iconSize:SetValue(getSaved(savedUnit, "castIconSize") or defaults.castIconSize or 0)
+    iconSize:SetRelativeWidth(0.5)
+    iconSize:SetCallback("OnValueChanged", function(_, _, value)
+        applySetting(unit, "castIconSize", math.floor(value), VUF.ApplyUnitCastBar)
+    end)
+    icons:AddChild(iconSize)
+
+    if unit == "player" then
+        local latency = AceGUI:Create("InlineGroup")
+        latency:SetTitle("Latency Zone")
+        latency:SetLayout("Flow")
+        latency:SetFullWidth(true)
+        container:AddChild(latency)
+
+        local latencyToggle = AceGUI:Create("CheckBox")
+        latencyToggle:SetLabel("Show Latency Zone")
+        latencyToggle:SetValue(getSaved(savedUnit, "showCastLatency") ~= false)
+        latencyToggle:SetRelativeWidth(0.34)
+        latencyToggle:SetCallback("OnValueChanged", function(_, _, value)
+            applySetting(unit, "showCastLatency", value, VUF.ApplyUnitCastBar)
+        end)
+        latency:AddChild(latencyToggle)
+
+        local latencyColour = getSaved(savedUnit, "latencyColor") or defaults.latencyColor or { 1, 0.15, 0.15 }
+        local latencyPicker = AceGUI:Create("ColorPicker")
+        latencyPicker:SetLabel("Latency Colour")
+        latencyPicker:SetColor(latencyColour[1], latencyColour[2], latencyColour[3], 1)
+        latencyPicker:SetHasAlpha(false)
+        latencyPicker:SetRelativeWidth(0.3)
+        local function saveLatency(_, _, r, g, b)
+            applySetting(unit, "latencyColor", { r, g, b }, VUF.ApplyUnitCastBar)
+        end
+        latencyPicker:SetCallback("OnValueChanged", saveLatency)
+        latencyPicker:SetCallback("OnValueConfirmed", saveLatency)
+        latency:AddChild(latencyPicker)
+
+        local latencyAlpha = AceGUI:Create("Slider")
+        latencyAlpha:SetLabel("Opacity")
+        latencyAlpha:SetSliderValues(0, 1, 0.05)
+        latencyAlpha:SetValue(getSaved(savedUnit, "latencyAlpha") or defaults.latencyAlpha or 0.45)
+        latencyAlpha:SetRelativeWidth(0.36)
+        latencyAlpha:SetCallback("OnValueChanged", function(_, _, value)
+            applySetting(unit, "latencyAlpha", value, VUF.ApplyUnitCastBar)
+        end)
+        latency:AddChild(latencyAlpha)
+    end
+
+    local textGroup = AceGUI:Create("InlineGroup")
+    textGroup:SetTitle("Text")
+    textGroup:SetLayout("Flow")
+    textGroup:SetFullWidth(true)
+    container:AddChild(textGroup)
+
+    local castName = AceGUI:Create("CheckBox")
+    castName:SetLabel("Show Spell Name")
+    local savedName = getSaved(savedUnit, "showCastName")
+    castName:SetValue(savedName == nil and getSaved(savedUnit, "showCastText") ~= false or savedName)
+    castName:SetRelativeWidth(0.5)
+    castName:SetCallback("OnValueChanged", function(_, _, value)
+        applySetting(unit, "showCastName", value, VUF.ApplyUnitCastBar)
+    end)
+    textGroup:AddChild(castName)
+
+    local castTime = AceGUI:Create("CheckBox")
+    castTime:SetLabel("Show Cast Time")
+    local savedTime = getSaved(savedUnit, "showCastTime")
+    castTime:SetValue(savedTime == nil and getSaved(savedUnit, "showCastText") ~= false or savedTime)
+    castTime:SetRelativeWidth(0.5)
+    castTime:SetCallback("OnValueChanged", function(_, _, value)
+        applySetting(unit, "showCastTime", value, VUF.ApplyUnitCastBar)
+    end)
+    textGroup:AddChild(castTime)
+
+    local castTextSize = AceGUI:Create("Slider")
+    castTextSize:SetLabel("Cast Text Size")
+    castTextSize:SetSliderValues(8, 22, 1)
+    castTextSize:SetValue(getSaved(savedUnit, "castTextSize") or 12)
+    castTextSize:SetRelativeWidth(0.5)
+    castTextSize:SetCallback("OnValueChanged", function(_, _, value)
+        applySetting(unit, "castTextSize", math.floor(value), VUF.ApplyUnitCastBar)
+    end)
+    textGroup:AddChild(castTextSize)
+
+    local castAlign = AceGUI:Create("Dropdown")
+    castAlign:SetLabel("Spell Name Alignment")
+    castAlign:SetList({ left = "Left", center = "Center" })
+    castAlign:SetValue(getSaved(savedUnit, "castTextAlign") or "left")
+    castAlign:SetRelativeWidth(0.5)
+    castAlign:SetCallback("OnValueChanged", function(_, _, value)
+        applySetting(unit, "castTextAlign", value, VUF.ApplyUnitCastBar)
+    end)
+    textGroup:AddChild(castAlign)
+
+    local preview = AceGUI:Create("CheckBox")
+    preview:SetLabel("Preview Frame (auras, cast bar, bars)")
+    preview:SetValue(VUF:IsPreviewing(unit))
+    preview:SetFullWidth(true)
+    preview:SetCallback("OnValueChanged", function(_, _, value) VUF:SetUnitPreview(unit, value) end)
+    container:AddChild(preview)
 end
 
 
@@ -865,7 +1085,8 @@ local function addUnitTab(container, unit)
         { text = "Feedback", value = "feedback" },
         { text = "Indicators", value = "indicators" },
     }
-    if hasAuras(unit) then table.insert(sections, 3, { text = "Buffs & Debuffs", value = "auras" }) end
+    if hasCastbar(unit) then table.insert(sections, 3, { text = "Cast Bar", value = "cast" }) end
+    if hasAuras(unit) then table.insert(sections, 4, { text = "Buffs & Debuffs", value = "auras" }) end
 
     local sectionTitles = {}
     for _, section in ipairs(sections) do sectionTitles[section.value] = section.text end
@@ -873,6 +1094,7 @@ local function addUnitTab(container, unit)
     local builders = {
         layout = addLayoutSettings,
         bars = addBarsSettings,
+        cast = addCastSettings,
         text = addTextSettings,
         auras = addAuraSettings,
         feedback = addFeedbackSettings,
