@@ -1,0 +1,12 @@
+## Interface: 120000, 120001, 120005, 120007, 120100
+## Title: |cFF8080FFV1tusha|rUnitFrames
+## Version: 0.1.0
+## Author: Viktor
+## Notes: Custom oUF-based unit frames.
+## SavedVariables: V1tushaUnitFramesDB
+## IconTexture: Interface\AddOns\V1tushaUnitFrames\Media\Textures\VUFIcon.png
+## X-oUF: V1tushaUnitFrames
+
+Libraries/Init.xml
+Elements/Init.xml
+Core/Init.xml

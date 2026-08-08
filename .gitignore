@@ -1,0 +1,6 @@
+*.bak
+*.tmp
+WTF/
+.DS_Store
+Thumbs.db
+*.before-recovery-*
