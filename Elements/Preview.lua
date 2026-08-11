@@ -92,13 +92,25 @@ local function layoutFakes(container, count, size, spacing, isDebuff)
 end
 --@VUFPREVIEW2@
 
--- Mirrors the tag formats so the Text tab options are visible while previewing.
-local function formatFake(format, current, maximum)
-    local percent = math.floor(current / maximum * 100 + 0.5)
-    if format == "hidden" then return "" end
-    if format == "percent" then return percent .. "%" end
-    if format == "compact" then return string.format("%s (%d%%)", AbbreviateNumbers(current), percent) end
-    return string.format("%s / %s (%d%%)", AbbreviateNumbers(current), AbbreviateNumbers(maximum), percent)
+-- Tag slots can hold anything, so preview shows a canned sample picked from what the
+-- string actually asks for — keying samples off the slot number lied as soon as the
+-- user rearranged the slots. Unknown strings show themselves, which is still honest.
+local PREVIEW_SAMPLES = {
+    { "name", "Preview Unit" },
+    { "hp", "1.2M / 1.4M (85%)" },
+    { "mana", "60 / 100 (60%)" },
+    { "pp", "60 / 100 (60%)" },
+    { "level", "70" },
+    { "absorbs", "45K" },
+}
+
+local function previewSample(text)
+    local sample, best
+    for _, entry in ipairs(PREVIEW_SAMPLES) do
+        local at = text:find(entry[1], 1, true)
+        if at and (not best or at < best) then sample, best = entry[2], at end
+    end
+    return sample or text
 end
 
 local CAST_DURATION = 5
@@ -164,22 +176,16 @@ local function applyPreview(unit, enabled)
         if frame.Health then
             frame.Health:SetMinMaxValues(0, healthMax)
             frame.Health:SetValue(health)
-            if frame.Health.Value then
-                frame.Health.Value:SetText(formatFake(conf.healthTextFormat, health, healthMax))
-                frame.Health.Value:SetShown(conf.showHealthText)
-            end
         end
         if frame.Power then
             frame.Power:SetMinMaxValues(0, powerMax)
             frame.Power:SetValue(power)
-            if frame.Power.Value then
-                frame.Power.Value:SetText(formatFake(conf.powerTextFormat, power, powerMax))
-                frame.Power.Value:SetShown(conf.showPowerText)
-            end
         end
-        if frame.Name then
-            frame.Name:SetText(unit:sub(1, 4) == "boss" and ("Boss " .. index) or "Preview Unit")
-            frame.Name:SetShown(conf.showName)
+        for slot, fs in ipairs(frame.Tags or {}) do
+            local tag = conf.tags[slot]
+            local sample = previewSample(tag.tag)
+            if unit:sub(1, 4) == "boss" and tag.tag:find("name", 1, true) then sample = "Boss " .. index end
+            fs:SetText(VUF:IsTagActive(tag) and sample or "")
         end
     end
 

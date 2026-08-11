@@ -36,7 +36,6 @@ local ALT_POWER_H    = 6
 local BAR_DEFAULTS = {
     powerHeight = POWER_HEIGHT,
     castHeight = CASTBAR_HEIGHT,
-    showPowerText = true,
     showCastText = true,
 }
 
@@ -69,6 +68,67 @@ local OVERLAY_DEFAULTS = {
     rangeAlpha = 0.45,
 }
 
+-- Tag slots replace the old fixed Name / Health text / Power text. The first three
+-- slots default to exactly what those used to render, reading the legacy keys, so an
+-- existing profile keeps its layout until the Tags tab writes over a slot. Slot 4
+-- carries the player's secondary mana readout, which used to be a hardcoded font
+-- string on the bar itself. size = 0 means "follow the global font size".
+local function tagDefaults(db, unit)
+    local function legacy(key, fallback)
+        if db and db[key] ~= nil then return db[key] end
+        return fallback
+    end
+
+    local nameTop = legacy("nameTextPosition", "top") ~= "bottom"
+    local white = { 1, 1, 1 }
+
+    return {
+        {
+            tag = "[name]",
+            enabled = legacy("showName", true) ~= false,
+            region = "health",
+            from = nameTop and "BOTTOMLEFT" or "TOPLEFT",
+            to = nameTop and "TOPLEFT" or "BOTTOMLEFT",
+            x = 2 + legacy("nameTextX", 0),
+            y = (nameTop and 3 or -3) + legacy("nameTextY", 0),
+            size = 0, colour = white,
+        },
+        {
+            tag = VUF.HEALTH_FORMATS[legacy("healthTextFormat", VUF:GetVisual("healthFormat"))] or VUF.HEALTH_FORMATS.full,
+            enabled = legacy("showHealthText", true) ~= false,
+            region = "health", from = "CENTER", to = "CENTER",
+            x = legacy("healthTextX", 0), y = legacy("healthTextY", 0),
+            size = 0, colour = white,
+        },
+        {
+            tag = VUF.POWER_FORMATS[legacy("powerTextFormat", "full")] or VUF.POWER_FORMATS.full,
+            enabled = legacy("showPowerText", true) ~= false,
+            region = "power", from = "CENTER", to = "CENTER",
+            x = legacy("powerTextX", 0), y = legacy("powerTextY", 0),
+            size = 0, colour = white,
+        },
+        unit == "player"
+            and { tag = "[curmana] / [maxmana]", enabled = true, region = "altpower",
+                  from = "CENTER", to = "CENTER", x = 0, y = 0, size = 0, colour = white }
+            or { tag = "", enabled = true, region = "frame", from = "TOPRIGHT", to = "TOPRIGHT", x = -2, y = -2, size = 0, colour = white },
+        { tag = "", enabled = true, region = "frame", from = "BOTTOMRIGHT", to = "BOTTOMRIGHT", x = -2, y = 2, size = 0, colour = white },
+    }
+end
+
+local function resolveTags(db, unit)
+    local defaults = tagDefaults(db, unit)
+    local saved = db and db.tags
+    for index, entry in ipairs(defaults) do
+        local override = saved and saved[index]
+        if override then
+            for key, value in pairs(override) do
+                if value ~= nil then entry[key] = value end
+            end
+        end
+    end
+    return defaults
+end
+
 local PREDICTION_DEFAULTS = {
     incomingHealsColor = { 0, 1, 0.4 },
     damageAbsorbColor  = { 0.8, 0.6, 0.1 },
@@ -93,6 +153,39 @@ local INDICATORS = {
 
 local function isBossUnit(unit) return unit:sub(1, 4) == "boss" end
 
+-- Auras may stack above tag slot 1 instead of anchoring to the frame, which keeps them
+-- clear of the unit name. Only sensible while that slot is actually drawn above the
+-- health bar; the stackAuras toggle lets the user take the frame anchor back.
+local function tagOneOnTop(conf)
+    local tag = conf.tags[1]
+    return VUF:IsTagActive(tag) and tag.region == "health" and tag.to:sub(1, 3) == "TOP"
+end
+
+-- X/Y stay live in both modes so no slider is silently dead. Stacked, buffs offset from
+-- the tag (defaults 0/4 reproduce the old hardcoded gap exactly).
+-- ponytail: stacked debuffs keep a fixed 4px chain gap — debuffY's default of 30 is
+-- calibrated for anchoring against the frame and would jump the row. Give the stack its
+-- own offset keys if anyone ever needs to tune that gap.
+local function anchorAuras(frame, conf)
+    local stacked = conf.stackAuras and tagOneOnTop(conf)
+    if frame.Buffs then
+        frame.Buffs:ClearAllPoints()
+        if stacked then
+            frame.Buffs:SetPoint("BOTTOMLEFT", frame.Tags[1], "TOPLEFT", conf.buffX, conf.buffY)
+        else
+            frame.Buffs:SetPoint(conf.buffAnchor, frame, conf.buffAnchor, conf.buffX, conf.buffY)
+        end
+    end
+    if frame.Debuffs then
+        frame.Debuffs:ClearAllPoints()
+        if stacked and frame.Buffs then
+            frame.Debuffs:SetPoint("BOTTOMLEFT", frame.Buffs, "TOPLEFT", conf.debuffX, 4)
+        else
+            frame.Debuffs:SetPoint(conf.debuffAnchor, frame, conf.debuffAnchor, conf.debuffX, conf.debuffY)
+        end
+    end
+end
+
 local function frameStyle(frame, unit)
     frame:SetAttribute("*type1", "target")
     frame:SetAttribute("*type2", "togglemenu")
@@ -112,11 +205,7 @@ local function frameStyle(frame, unit)
     frame.Health:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
     frame.Health:SetPoint("BOTTOM", frame.Power, "TOP", 0, BAR_GAP)
 
-    local nameText = frame:CreateFontString(nil, "OVERLAY")
-    VUF:ApplyFont(nameText)
-    nameText:SetPoint("BOTTOMLEFT", frame.Health, "TOPLEFT", 2, 3)
-    frame:Tag(nameText, "[name]")
-    frame.Name = nameText
+    VUF:CreateUnitTags(frame)
 
     if not SMALL_FRAMES[unit] then
         VUF:CreateCastBar(frame)
@@ -135,22 +224,14 @@ local function frameStyle(frame, unit)
             initialAnchor = "BOTTOMLEFT", growthX = "RIGHT", growthY = "UP", onlyShowPlayer = conf.onlyPlayerBuffs,
         })
         buffs:SetSize(conf.width, conf.buffSize + conf.buffSpacing)
-        if conf.nameTextPosition == "top" and conf.showName then
-            buffs:SetPoint("BOTTOMLEFT", frame.Name, "TOPLEFT", 0, 4)
-        else
-            buffs:SetPoint(conf.buffAnchor, frame, conf.buffAnchor, conf.buffX, conf.buffY)
-        end
 
         local debuffs = VUF:CreateAuraContainer(frame, "Debuffs", {
             size = conf.debuffSize, spacing = conf.debuffSpacing, num = conf.debuffCount, maxCols = debuffCols,
             initialAnchor = "BOTTOMLEFT", growthX = "RIGHT", growthY = "UP", onlyShowPlayer = conf.onlyPlayerDebuffs,
         })
         debuffs:SetSize(conf.width, conf.debuffSize + conf.debuffSpacing)
-        if conf.nameTextPosition == "top" and conf.showName then
-            debuffs:SetPoint("BOTTOMLEFT", buffs, "TOPLEFT", 0, 4)
-        else
-            debuffs:SetPoint(conf.debuffAnchor, frame, conf.debuffAnchor, conf.debuffX, conf.debuffY)
-        end
+
+        anchorAuras(frame, conf)
     end
 
     VUF:CreateRaidTargetIndicator(frame)
@@ -192,9 +273,7 @@ local function frameStyle(frame, unit)
         frame.Range = { insideAlpha = 1.0, outsideAlpha = 0.45 }
     end
 
-    if unit ~= "target" then
-        VUF:CreateTargetGlow(frame, unit)
-    end
+    VUF:CreateTargetGlow(frame, unit)
     VUF:CreateMouseoverGlow(frame, unit)
 end
 
@@ -215,7 +294,6 @@ function VUF:GetUnitConfig(unit)
         height = (db and db.height) or d.height,
         powerHeight = (db and db.powerHeight) or BAR_DEFAULTS.powerHeight,
         castHeight = (db and db.castHeight) or BAR_DEFAULTS.castHeight,
-        showPowerText = not db or db.showPowerText ~= false,
         showCastText = not db or db.showCastText ~= false,
         showCastName = settingOrDefault(db, "showCastName", settingOrDefault(db, "showCastText", true)),
         showCastTime = settingOrDefault(db, "showCastTime", settingOrDefault(db, "showCastText", true)),
@@ -242,11 +320,8 @@ function VUF:GetUnitConfig(unit)
         castAnchorTo = (db and db.castAnchorTo) or CAST_DEFAULTS.castAnchorTo,
         castX = settingOrDefault(db, "castX", CAST_DEFAULTS.castX),
         castY = settingOrDefault(db, "castY", CAST_DEFAULTS.castY),
-        showName = not db or db.showName ~= false,
-        showHealthText = not db or db.showHealthText ~= false,
-        healthTextFormat = (db and db.healthTextFormat) or VUF:GetVisual("healthFormat"),
-        powerTextFormat = (db and db.powerTextFormat) or "full",
-        nameTextPosition = (db and db.nameTextPosition) or "top",
+        tags = resolveTags(db, unit),
+        stackAuras = not db or db.stackAuras ~= false,
         showHealthPrediction = not db or db.showHealthPrediction ~= false,
         showIncomingHeals = settingOrDefault(db, "showIncomingHeals", true),
         showDamageAbsorb = settingOrDefault(db, "showDamageAbsorb", true),
@@ -441,6 +516,10 @@ function VUF:ApplyUnitElements(unit)
     if frame.Castbar and conf.showCastBar then
         VUF:ApplyUnitCastBar(unit)
     end
+
+    -- Slots hide themselves when the bar they hang off is switched off, so every
+    -- element toggle has to re-run the tag pass or the text floats over nothing.
+    VUF:ApplyUnitText(unit)
 end
 
 function VUF:ApplyUnitText(unit)
@@ -454,43 +533,8 @@ function VUF:ApplyUnitText(unit)
     local conf = VUF:GetUnitConfig(unit)
     if not frame or not conf then return end
 
-    if frame.Name then
-        frame.Name:ClearAllPoints()
-        if conf.nameTextPosition == "bottom" then
-            frame.Name:SetPoint("TOPLEFT", frame.Health, "BOTTOMLEFT", 2, -3)
-        else
-            frame.Name:SetPoint("BOTTOMLEFT", frame.Health, "TOPLEFT", 2, 3)
-        end
-        frame.Name:SetShown(conf.showName)
-    end
-    if frame.Buffs then
-        frame.Buffs:ClearAllPoints()
-        if conf.nameTextPosition == "top" and conf.showName then
-            frame.Buffs:SetPoint("BOTTOMLEFT", frame.Name, "TOPLEFT", 0, 4)
-        else
-            frame.Buffs:SetPoint(conf.buffAnchor, frame, conf.buffAnchor, conf.buffX, conf.buffY)
-        end
-    end
-    if frame.Debuffs and frame.Buffs then
-        frame.Debuffs:ClearAllPoints()
-        if conf.nameTextPosition == "top" and conf.showName then
-            frame.Debuffs:SetPoint("BOTTOMLEFT", frame.Buffs, "TOPLEFT", 0, 4)
-        else
-            frame.Debuffs:SetPoint(conf.debuffAnchor, frame, conf.debuffAnchor, conf.debuffX, conf.debuffY)
-        end
-    end
-    if frame.Health and frame.Health.Value then
-        frame.Health.Value:SetShown(conf.showHealthText)
-        local tag = VUF.HEALTH_FORMATS[conf.healthTextFormat] or VUF.HEALTH_FORMATS.full
-        frame:Tag(frame.Health.Value, tag)
-        frame.Health.Value:UpdateTag()
-    end
-    if frame.Power and frame.Power.Value then
-        frame.Power.Value:SetShown(conf.showPowerText)
-        local tag = VUF.POWER_FORMATS[conf.powerTextFormat] or VUF.POWER_FORMATS.full
-        frame:Tag(frame.Power.Value, tag)
-        frame.Power.Value:UpdateTag()
-    end
+    VUF:ApplyUnitTags(unit)
+    anchorAuras(frame, conf)
     if VUF.RefreshUnitPreview then VUF:RefreshUnitPreview(unit) end
 end
 
@@ -511,13 +555,6 @@ function VUF:ApplyUnitAuras(unit)
     frame.Buffs.maxCols = math.max(1, math.floor(conf.width / (conf.buffSize + conf.buffSpacing)))
     frame.Buffs.onlyShowPlayer = conf.onlyPlayerBuffs
     frame.Buffs:SetSize(conf.width, conf.buffSize + conf.buffSpacing)
-    frame.Buffs:ClearAllPoints()
-    if conf.nameTextPosition == "top" and conf.showName and frame.Name then
-        frame.Buffs:SetPoint("BOTTOMLEFT", frame.Name, "TOPLEFT", 0, 4)
-    else
-        frame.Buffs:SetPoint(conf.buffAnchor, frame, conf.buffAnchor, conf.buffX, conf.buffY)
-    end
-    frame.Buffs:ForceUpdate()
 
     frame.Debuffs.size = conf.debuffSize
     frame.Debuffs.spacing = conf.debuffSpacing
@@ -525,12 +562,9 @@ function VUF:ApplyUnitAuras(unit)
     frame.Debuffs.maxCols = math.max(1, math.floor(conf.width / (conf.debuffSize + conf.debuffSpacing)))
     frame.Debuffs.onlyShowPlayer = conf.onlyPlayerDebuffs
     frame.Debuffs:SetSize(conf.width, conf.debuffSize + conf.debuffSpacing)
-    frame.Debuffs:ClearAllPoints()
-    if conf.nameTextPosition == "top" and conf.showName and frame.Name then
-        frame.Debuffs:SetPoint("BOTTOMLEFT", frame.Buffs, "TOPLEFT", 0, 4)
-    else
-        frame.Debuffs:SetPoint(conf.debuffAnchor, frame, conf.debuffAnchor, conf.debuffX, conf.debuffY)
-    end
+
+    anchorAuras(frame, conf)
+    frame.Buffs:ForceUpdate()
     frame.Debuffs:ForceUpdate()
 end
 
@@ -586,7 +620,6 @@ function VUF:ApplyUnitBars(unit)
     end
     if frame.Power then
         frame.Power:SetHeight(conf.powerHeight)
-        frame.Power.Value:SetShown(conf.showPowerText)
     end
     if frame.Health and frame.Power then
         frame.Health:ClearAllPoints()

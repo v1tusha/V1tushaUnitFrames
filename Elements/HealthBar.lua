@@ -113,11 +113,6 @@ function VUF:CreateHealthBar(frame)
     bg:SetAlpha(VUF:GetVisual("backgroundAlpha"))
     hb.bg = bg
 
-    local text = hb:CreateFontString(nil, "OVERLAY")
-    VUF:ApplyFont(text)
-    text:SetPoint("CENTER")
-    hb.Value = text
-
     hb.colorClass    = true
     hb.colorReaction = true
     hb.colorHealth   = true
@@ -125,5 +120,4 @@ function VUF:CreateHealthBar(frame)
     attachPredictionBars(hb, tex, frame.unit)
 
     frame.Health = hb
-    frame:Tag(text, VUF:GetHealthTag())
 end

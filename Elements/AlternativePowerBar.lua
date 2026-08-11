@@ -13,14 +13,8 @@ function VUF:CreateAdditionalPower(frame)
     bg:SetAlpha(VUF:GetVisual("backgroundAlpha"))
     ap.bg = bg
 
-    local text = ap:CreateFontString(nil, "OVERLAY")
-    VUF:ApplyFont(text)
-    text:SetPoint("CENTER")
-    ap.Value = text
-
     ap.colorPower = true
     ap.frequentUpdates = true
 
     frame.AdditionalPower = ap
-    frame:Tag(text, "[curpp] / [maxpp]")
 end

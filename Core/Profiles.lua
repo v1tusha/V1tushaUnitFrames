@@ -45,6 +45,9 @@ local DEFAULTS = {
                     [12] = { 0.71, 1,    0.92 },  -- Chi
                     [16] = { 0.41, 0.8,  0.94 },  -- Arcane Charges
                     [19] = { 100/255, 173/255, 206/255 },  -- Essence
+                    -- oUF fake power types: string keys, no numeric id exists.
+                    TIP_OF_THE_SPEAR = { 108/255, 188/255, 40/255  },
+                    ICICLES          = { 116/255, 217/255, 246/255 },
                 },
                 Reaction = {
                     [1] = { 204/255, 64/255,  64/255  },

@@ -71,6 +71,8 @@ function VUF:CreateMover(frame, key, label, save)
 
     local m = CreateFrame("Button", "V1tushaUnitFramesMover_" .. key, UIParent)
     m.unit = key
+    -- Boss 2-8 always chain to the previous frame, so their movers would snap back.
+    m.vufSkip = key:match("^boss[2-8]$") ~= nil
     m:SetAllPoints(frame)
     m:SetFrameStrata("TOOLTIP")
     m:SetMovable(true)
@@ -95,7 +97,10 @@ function VUF:CreateMover(frame, key, label, save)
 
     local function stopDragging(self, saveNow)
         self:SetScript("OnUpdate", nil)
-        if saveNow then save(key, frame) end
+        if saveNow then
+            save(key, frame)
+            if VUF.moverCallback then VUF.moverCallback(key) end
+        end
         self.cursorX, self.cursorY = nil, nil
         self.frameX, self.frameY = nil, nil
         self.lastX, self.lastY = nil, nil

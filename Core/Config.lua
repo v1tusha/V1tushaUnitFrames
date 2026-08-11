@@ -2,6 +2,44 @@ local _, VUF = ...
 
 local AceGUI = LibStub("AceGUI-3.0")
 
+-- Position sliders span thousands of pixels, so the thumb cannot hit single steps.
+-- Arrows on the value box nudge by exactly one step (x10 with Shift). AceGUI pools
+-- widgets, so build them once per slider object and read step/min/max live on click.
+local function createSlider()
+    local slider = AceGUI:Create("Slider")
+    if slider.vufStepper then return slider end
+    slider.vufStepper = true
+
+    local box = slider.editbox
+    if not box then return slider end
+
+    local function arrow(sign, anchor, relative, art)
+        local button = CreateFrame("Button", nil, slider.frame)
+        button:SetSize(17, 17)
+        -- The slider's hit rect is extended 10px down over the value box, so outrank it.
+        button:SetFrameLevel(slider.frame:GetFrameLevel() + 4)
+        button:SetPoint(anchor, box, relative, sign * 2, 0)
+        button:SetNormalTexture("Interface\\Buttons\\UI-SpellbookIcon-" .. art .. "Page-Up")
+        button:SetPushedTexture("Interface\\Buttons\\UI-SpellbookIcon-" .. art .. "Page-Down")
+        button:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
+        button:SetScript("OnClick", function()
+            if slider.disabled then return end
+            local step = slider.step or 1
+            local low, high = slider.min or 0, slider.max or 100
+            local value = (slider.value or 0) + sign * step * (IsShiftKeyDown() and 10 or 1)
+            value = math.floor((value - low) / step + 0.5) * step + low
+            value = math.max(low, math.min(high, value))
+            if value == slider.value then return end
+            slider:SetValue(value)
+            slider:Fire("OnValueChanged", value)
+        end)
+    end
+
+    arrow(-1, "RIGHT", "LEFT", "Prev")
+    arrow(1, "LEFT", "RIGHT", "Next")
+    return slider
+end
+
 local UNIT_TABS = {
     { text = "General", value = "general" },
     { text = "Visuals", value = "visuals" },
@@ -20,20 +58,6 @@ local FONT_OUTLINES = {
     OUTLINE = "Outline",
     ["THICKOUTLINE"] = "Thick Outline",
     ["OUTLINE, MONOCHROME"] = "Outline (mono)",
-}
-
-local HEALTH_FORMAT_LABELS = {
-    full = "1200 / 3500 (85%)",
-    compact = "1200 (85%)",
-    percent = "85%",
-    hidden = "Hidden",
-}
-
-local POWER_FORMAT_LABELS = {
-    full = "60 / 100 (60%)",
-    compact = "60 (60%)",
-    percent = "60%",
-    hidden = "Hidden",
 }
 
 local COOLDOWN_STYLES = {
@@ -66,7 +90,7 @@ local function addCooldownTextSettings(container)
         row:SetFullWidth(true)
         group:AddChild(row)
 
-        local threshold = AceGUI:Create("Slider")
+        local threshold = createSlider()
         threshold:SetLabel("Minimum Seconds")
         threshold:SetSliderValues(0, 86400, 1)
         threshold:SetValue(breakpoint.threshold)
@@ -166,6 +190,30 @@ local function addHeading(container, text)
     container:AddChild(heading)
 end
 
+local function addPreviewToggle(container, unit)
+    local preview = AceGUI:Create("CheckBox")
+    preview:SetLabel(unit == "boss" and "Preview Boss Frames" or "Preview Frame (auras, cast bar, bars)")
+    preview:SetValue(VUF:IsPreviewing(unit))
+    preview:SetRelativeWidth(0.5)
+    preview:SetCallback("OnValueChanged", function(widget, _, value)
+        VUF:SetUnitPreview(unit, value)
+        widget:SetValue(VUF:IsPreviewing(unit))
+    end)
+    container:AddChild(preview)
+end
+
+local function addDragToggle(container)
+    local drag = AceGUI:Create("CheckBox")
+    drag:SetLabel("Unlock — drag frames with the mouse")
+    drag:SetValue(VUF.moversUnlocked)
+    drag:SetRelativeWidth(0.5)
+    drag:SetCallback("OnValueChanged", function(widget)
+        VUF:ToggleMovers()
+        widget:SetValue(VUF.moversUnlocked)
+    end)
+    container:AddChild(drag)
+end
+
 local function isBoss(unit) return unit == "boss" end
 local function settingUnit(unit) return isBoss(unit) and "boss1" or unit end
 local function hasCastbar(unit) return unit ~= "targettarget" and unit ~= "focustarget" end
@@ -212,7 +260,7 @@ local function addLayoutSettings(container, unit)
     end)
     container:AddChild(enabled)
 
-    local width = AceGUI:Create("Slider")
+    local width = createSlider()
     width:SetLabel("Width")
     width:SetSliderValues(60, 400, 1)
     width:SetValue(getSaved(savedUnit, "width") or defaults.width)
@@ -222,7 +270,7 @@ local function addLayoutSettings(container, unit)
     end)
     container:AddChild(width)
 
-    local height = AceGUI:Create("Slider")
+    local height = createSlider()
     height:SetLabel("Height")
     height:SetSliderValues(18, 100, 1)
     height:SetValue(getSaved(savedUnit, "height") or defaults.height)
@@ -271,7 +319,7 @@ local function addLayoutSettings(container, unit)
     anchorTo:SetCallback("OnValueChanged", function(_, _, value) applySetting(unit, "anchorTo", value, VUF.ApplyUnitLayout) end)
     container:AddChild(anchorTo)
 
-    local x = AceGUI:Create("Slider")
+    local x = createSlider()
     x:SetLabel("X Offset")
     x:SetSliderValues(-3000, 3000, 1)
     x:SetValue(getSaved(savedUnit, "x") or defaults.point[4])
@@ -279,13 +327,24 @@ local function addLayoutSettings(container, unit)
     x:SetCallback("OnValueChanged", function(_, _, value) applySetting(unit, "x", math.floor(value), VUF.ApplyUnitLayout) end)
     container:AddChild(x)
 
-    local y = AceGUI:Create("Slider")
+    local y = createSlider()
     y:SetLabel("Y Offset")
     y:SetSliderValues(-3000, 3000, 1)
     y:SetValue(getSaved(savedUnit, "y") or defaults.point[5])
     y:SetRelativeWidth(0.5)
     y:SetCallback("OnValueChanged", function(_, _, value) applySetting(unit, "y", math.floor(value), VUF.ApplyUnitLayout) end)
     container:AddChild(y)
+
+    -- Dragging a mover writes the same keys, so mirror it back into the widgets.
+    VUF.moverCallback = function(key)
+        if key ~= savedUnit then return end
+        local saved = ensureDB().units[savedUnit] or {}
+        parent:SetValue(saved.parent or "UIParent")
+        anchorFrom:SetValue(saved.anchorFrom or defaults.point[1])
+        anchorTo:SetValue(saved.anchorTo or defaults.point[3])
+        x:SetValue(saved.x or defaults.point[4])
+        y:SetValue(saved.y or defaults.point[5])
+    end
 
     addSpacer(container, 10)
 
@@ -306,7 +365,7 @@ local function addLayoutSettings(container, unit)
         end)
         bossGroup:AddChild(growth)
 
-        local spacing = AceGUI:Create("Slider")
+        local spacing = createSlider()
         spacing:SetLabel("Frame Spacing")
         spacing:SetSliderValues(0, 100, 1)
         spacing:SetValue(getSaved(savedUnit, "bossSpacing") or 6)
@@ -320,16 +379,6 @@ local function addLayoutSettings(container, unit)
         bossNote:SetText("|cff888888Boss 1 uses the layout above; Boss 2-8 follow it using this direction and spacing.|r")
         bossNote:SetFullWidth(true)
         bossGroup:AddChild(bossNote)
-
-        local bossPreview = AceGUI:Create("CheckBox")
-        bossPreview:SetLabel("Preview Boss Frames")
-        bossPreview:SetValue(VUF:IsPreviewing("boss"))
-        bossPreview:SetFullWidth(true)
-        bossPreview:SetCallback("OnValueChanged", function(widget, _, value)
-            VUF:SetUnitPreview("boss", value)
-            widget:SetValue(VUF:IsPreviewing("boss"))
-        end)
-        bossGroup:AddChild(bossPreview)
 
         addSpacer(container, 10)
     end
@@ -367,7 +416,7 @@ local function addBarsSettings(container, unit)
     end)
     addRow(powerVisible)
 
-    local powerHeight = AceGUI:Create("Slider")
+    local powerHeight = createSlider()
     powerHeight:SetLabel("Power Bar Height")
     powerHeight:SetSliderValues(2, 24, 1)
     powerHeight:SetValue(getSaved(savedUnit, "powerHeight") or 10)
@@ -397,7 +446,7 @@ local function addBarsSettings(container, unit)
     healthPicker:SetCallback("OnValueConfirmed", saveHealthColor)
     addRow(healthPicker, 0.53)
 
-    local healthAlpha = AceGUI:Create("Slider")
+    local healthAlpha = createSlider()
     healthAlpha:SetLabel("Health Opacity")
     healthAlpha:SetSliderValues(0, 1, 0.05)
     healthAlpha:SetValue(getSaved(savedUnit, "healthAlpha") or 1)
@@ -406,7 +455,7 @@ local function addBarsSettings(container, unit)
     end)
     addRow(healthAlpha)
 
-    local powerAlpha = AceGUI:Create("Slider")
+    local powerAlpha = createSlider()
     powerAlpha:SetLabel("Power Opacity")
     powerAlpha:SetSliderValues(0, 1, 0.05)
     powerAlpha:SetValue(getSaved(savedUnit, "powerAlpha") or 1)
@@ -427,7 +476,7 @@ local function addBarsSettings(container, unit)
     backgroundPicker:SetCallback("OnValueConfirmed", saveBackground)
     addRow(backgroundPicker)
 
-    local backgroundAlpha = AceGUI:Create("Slider")
+    local backgroundAlpha = createSlider()
     backgroundAlpha:SetLabel("Background Opacity")
     backgroundAlpha:SetSliderValues(0, 1, 0.05)
     backgroundAlpha:SetValue(getSaved(savedUnit, "barBackgroundAlpha") or VUF:GetVisual("backgroundAlpha"))
@@ -474,7 +523,7 @@ local function addBarsSettings(container, unit)
         picker:SetCallback("OnValueConfirmed", save)
         predictionGroup:AddChild(picker)
 
-        local alpha = AceGUI:Create("Slider")
+        local alpha = createSlider()
         alpha:SetLabel("Opacity")
         alpha:SetSliderValues(0, 1, 0.05)
         alpha:SetValue(getSaved(savedUnit, alphaKey) or predictionDefaults[alphaKey] or 0.5)
@@ -503,6 +552,15 @@ local function addBarsSettings(container, unit)
             applySetting(unit, "showClassPower", value, VUF.ApplyUnitElements)
         end)
         addRow(classPowerVisible)
+
+        -- Mana bar for specs whose main resource is not mana (Shadow, Balance, Feral…).
+        local additionalPower = AceGUI:Create("CheckBox")
+        additionalPower:SetLabel("Show Secondary Mana Bar")
+        additionalPower:SetValue(getSaved(savedUnit, "showAdditionalPower") ~= false)
+        additionalPower:SetCallback("OnValueChanged", function(_, _, value)
+            applySetting(unit, "showAdditionalPower", value, VUF.ApplyUnitElements)
+        end)
+        addRow(additionalPower)
     else
         local classPowerSpacer = AceGUI:Create("Label")
         classPowerSpacer:SetText(" ")
@@ -545,7 +603,7 @@ local function addCastSettings(container, unit)
     end)
     addRow(container, castVisible)
 
-    local castHeight = AceGUI:Create("Slider")
+    local castHeight = createSlider()
     castHeight:SetLabel("Cast Bar Height")
     castHeight:SetSliderValues(6, 40, 1)
     castHeight:SetValue(getSaved(savedUnit, "castHeight") or 18)
@@ -562,7 +620,7 @@ local function addCastSettings(container, unit)
     end)
     addRow(container, reverse)
 
-    local holdTime = AceGUI:Create("Slider")
+    local holdTime = createSlider()
     holdTime:SetLabel("Hold Time After Cast")
     holdTime:SetSliderValues(0, 3, 0.1)
     holdTime:SetValue(getSaved(savedUnit, "castHoldTime") or defaults.castHoldTime or 0.5)
@@ -613,7 +671,7 @@ local function addCastSettings(container, unit)
     end)
     addRow(position, detached)
 
-    local castWidth = AceGUI:Create("Slider")
+    local castWidth = createSlider()
     castWidth:SetLabel("Width (0 = match frame)")
     castWidth:SetSliderValues(0, 800, 1)
     castWidth:SetValue(getSaved(savedUnit, "castWidth") or defaults.castWidth or 0)
@@ -622,8 +680,9 @@ local function addCastSettings(container, unit)
     end)
     addRow(position, castWidth)
 
+    local castParent
     if not isBoss(unit) then
-        local castParent = AceGUI:Create("Dropdown")
+        castParent = AceGUI:Create("Dropdown")
         castParent:SetLabel("Anchor To Frame")
         castParent:SetList(PARENT_LIST)
         castParent:SetValue(getSaved(savedUnit, "castParent") or ("V1tushaUnitFrames_" .. savedUnit))
@@ -651,7 +710,7 @@ local function addCastSettings(container, unit)
     end)
     addRow(position, castTo)
 
-    local castX = AceGUI:Create("Slider")
+    local castX = createSlider()
     castX:SetLabel("X Offset")
     castX:SetSliderValues(-2000, 2000, 1)
     castX:SetValue(getSaved(savedUnit, "castX") or defaults.castX or 0)
@@ -660,7 +719,7 @@ local function addCastSettings(container, unit)
     end)
     addRow(position, castX)
 
-    local castY = AceGUI:Create("Slider")
+    local castY = createSlider()
     castY:SetLabel("Y Offset")
     castY:SetSliderValues(-2000, 2000, 1)
     castY:SetValue(getSaved(savedUnit, "castY") or defaults.castY or -4)
@@ -668,6 +727,16 @@ local function addCastSettings(container, unit)
         applySetting(unit, "castY", math.floor(value), VUF.ApplyUnitCastBar)
     end)
     addRow(position, castY)
+
+    VUF.moverCallback = function(key)
+        if key ~= savedUnit .. "Cast" then return end
+        local saved = ensureDB().units[savedUnit] or {}
+        if not isBoss(unit) then castParent:SetValue(saved.castParent or ("V1tushaUnitFrames_" .. savedUnit)) end
+        castFrom:SetValue(saved.castAnchorFrom or defaults.castAnchorFrom or "TOP")
+        castTo:SetValue(saved.castAnchorTo or defaults.castAnchorTo or "BOTTOM")
+        castX:SetValue(saved.castX or defaults.castX or 0)
+        castY:SetValue(saved.castY or defaults.castY or -4)
+    end
 
     local icons = AceGUI:Create("InlineGroup")
     icons:SetTitle("Spell Icon")
@@ -685,7 +754,7 @@ local function addCastSettings(container, unit)
     end)
     icons:AddChild(iconPosition)
 
-    local iconSize = AceGUI:Create("Slider")
+    local iconSize = createSlider()
     iconSize:SetLabel("Icon Size (0 = match bar height)")
     iconSize:SetSliderValues(0, 48, 1)
     iconSize:SetValue(getSaved(savedUnit, "castIconSize") or defaults.castIconSize or 0)
@@ -724,7 +793,7 @@ local function addCastSettings(container, unit)
         latencyPicker:SetCallback("OnValueConfirmed", saveLatency)
         latency:AddChild(latencyPicker)
 
-        local latencyAlpha = AceGUI:Create("Slider")
+        local latencyAlpha = createSlider()
         latencyAlpha:SetLabel("Opacity")
         latencyAlpha:SetSliderValues(0, 1, 0.05)
         latencyAlpha:SetValue(getSaved(savedUnit, "latencyAlpha") or defaults.latencyAlpha or 0.45)
@@ -761,7 +830,7 @@ local function addCastSettings(container, unit)
     end)
     textGroup:AddChild(castTime)
 
-    local castTextSize = AceGUI:Create("Slider")
+    local castTextSize = createSlider()
     castTextSize:SetLabel("Cast Text Size")
     castTextSize:SetSliderValues(8, 22, 1)
     castTextSize:SetValue(getSaved(savedUnit, "castTextSize") or 12)
@@ -780,66 +849,166 @@ local function addCastSettings(container, unit)
         applySetting(unit, "castTextAlign", value, VUF.ApplyUnitCastBar)
     end)
     textGroup:AddChild(castAlign)
-
-    local preview = AceGUI:Create("CheckBox")
-    preview:SetLabel("Preview Frame (auras, cast bar, bars)")
-    preview:SetValue(VUF:IsPreviewing(unit))
-    preview:SetFullWidth(true)
-    preview:SetCallback("OnValueChanged", function(_, _, value) VUF:SetUnitPreview(unit, value) end)
-    container:AddChild(preview)
 end
 
 
-local function addTextSettings(container, unit)
+local TAG_REGIONS = { health = "Health Bar", power = "Power Bar", altpower = "Secondary Mana Bar", frame = "Whole Frame" }
+local TAG_SLOT_NAMES = { "Tag One", "Tag Two", "Tag Three", "Tag Four", "Tag Five" }
+
+local function saveTag(unit, index, key, value)
+    local db = ensureDB()
+    for _, target in ipairs(isBoss(unit) and { "boss1", "boss2", "boss3", "boss4", "boss5", "boss6", "boss7", "boss8" } or { unit }) do
+        db.units[target] = db.units[target] or {}
+        db.units[target].tags = db.units[target].tags or {}
+        db.units[target].tags[index] = db.units[target].tags[index] or {}
+        db.units[target].tags[index][key] = value
+    end
+    if isBoss(unit) then
+        for i = 1, 8 do VUF:ApplyUnitText("boss" .. i) end
+    else
+        VUF:ApplyUnitText(unit)
+    end
+end
+
+local function addTagSlotEditor(container, unit, index, onLabelChanged)
     local savedUnit = settingUnit(unit)
-    local function save(key, value)
-        applySetting(unit, key, value, VUF.ApplyUnitText)
+    local tag = VUF:GetUnitConfig(savedUnit).tags[index]
+    local function save(key, value) saveTag(unit, index, key, value) end
+
+    local shown = AceGUI:Create("CheckBox")
+    shown:SetLabel("Show This Slot")
+    shown:SetValue(tag.enabled ~= false)
+    shown:SetFullWidth(true)
+    shown:SetCallback("OnValueChanged", function(_, _, value)
+        tag.enabled = value
+        save("enabled", value)
+        onLabelChanged()
+    end)
+    container:AddChild(shown)
+
+    local editBox = AceGUI:Create("EditBox")
+    editBox:SetLabel("Tag String — press Enter to apply")
+    editBox:SetText(tag.tag)
+    editBox:SetFullWidth(true)
+    editBox:SetCallback("OnEnterPressed", function(_, _, value)
+        tag.tag = value
+        save("tag", value)
+        onLabelChanged()
+    end)
+    container:AddChild(editBox)
+
+    local colour = AceGUI:Create("ColorPicker")
+    colour:SetLabel("Colour")
+    colour:SetColor(tag.colour[1], tag.colour[2], tag.colour[3], 1)
+    colour:SetHasAlpha(false)
+    colour:SetRelativeWidth(0.25)
+    local saveColour = function(_, _, r, g, b) save("colour", { r, g, b }) end
+    colour:SetCallback("OnValueChanged", saveColour)
+    colour:SetCallback("OnValueConfirmed", saveColour)
+    container:AddChild(colour)
+
+    for _, entry in ipairs({
+        { key = "region", label = "Attach To", list = TAG_REGIONS },
+        { key = "from", label = "Anchor From", list = ANCHOR_POINTS },
+        { key = "to", label = "Anchor To", list = ANCHOR_POINTS },
+    }) do
+        local dropdown = AceGUI:Create("Dropdown")
+        dropdown:SetLabel(entry.label)
+        dropdown:SetList(entry.list)
+        dropdown:SetValue(tag[entry.key])
+        dropdown:SetRelativeWidth(0.25)
+        dropdown:SetCallback("OnValueChanged", function(_, _, value) save(entry.key, value) end)
+        container:AddChild(dropdown)
     end
 
-    local name = AceGUI:Create("CheckBox")
-    name:SetLabel("Show Name")
-    name:SetValue(getSaved(savedUnit, "showName") ~= false)
-    name:SetRelativeWidth(0.5)
-    name:SetCallback("OnValueChanged", function(_, _, value) save("showName", value) end)
-    container:AddChild(name)
+    for _, entry in ipairs({
+        { key = "x", label = "X Position", low = -600, high = 600 },
+        { key = "y", label = "Y Position", low = -600, high = 600 },
+        { key = "size", label = "Font Size (0 = follow global)", low = 0, high = 64 },
+    }) do
+        local slider = createSlider()
+        slider:SetLabel(entry.label)
+        slider:SetSliderValues(entry.low, entry.high, 1)
+        slider:SetValue(tag[entry.key])
+        slider:SetRelativeWidth(0.33)
+        slider:SetCallback("OnValueChanged", function(_, _, value) save(entry.key, math.floor(value)) end)
+        container:AddChild(slider)
+    end
 
-    local namePosition = AceGUI:Create("Dropdown")
-    namePosition:SetLabel("Name Position")
-    namePosition:SetList({ top = "Above Health", bottom = "Below Health" })
-    namePosition:SetValue(getSaved(savedUnit, "nameTextPosition") or "top")
-    namePosition:SetRelativeWidth(0.5)
-    namePosition:SetCallback("OnValueChanged", function(_, _, value) save("nameTextPosition", value) end)
-    container:AddChild(namePosition)
+    local insert = AceGUI:Create("InlineGroup")
+    insert:SetTitle("Insert Tag")
+    insert:SetLayout("Flow")
+    insert:SetFullWidth(true)
+    container:AddChild(insert)
 
-    local health = AceGUI:Create("CheckBox")
-    health:SetLabel("Show Health Text")
-    health:SetValue(getSaved(savedUnit, "showHealthText") ~= false)
-    health:SetRelativeWidth(0.5)
-    health:SetCallback("OnValueChanged", function(_, _, value) save("showHealthText", value) end)
-    container:AddChild(health)
+    local hint = AceGUI:Create("Label")
+    hint:SetText("|cff888888Picking a tag appends it to the string above. Tags ending in (n) take an argument — [name:short(14)], [perhp:prec(1)]. Colour tags are prefixes: put them before the text they should tint.|r")
+    hint:SetFullWidth(true)
+    insert:AddChild(hint)
 
-    local healthFormat = AceGUI:Create("Dropdown")
-    healthFormat:SetLabel("Health Text Format")
-    healthFormat:SetList(HEALTH_FORMAT_LABELS)
-    healthFormat:SetValue(VUF:GetUnitConfig(savedUnit).healthTextFormat)
-    healthFormat:SetRelativeWidth(0.5)
-    healthFormat:SetCallback("OnValueChanged", function(_, _, value) save("healthTextFormat", value) end)
-    container:AddChild(healthFormat)
+    for _, group in ipairs(VUF.TAG_DB) do
+        local list, order = {}, {}
+        for _, definition in ipairs(group.tags) do
+            list[definition[1]] = definition[1] .. " — " .. definition[2]
+            order[#order + 1] = definition[1]
+        end
 
-    local powerFormat = AceGUI:Create("Dropdown")
-    powerFormat:SetLabel("Power Text Format")
-    powerFormat:SetList(POWER_FORMAT_LABELS)
-    powerFormat:SetValue(VUF:GetUnitConfig(savedUnit).powerTextFormat)
-    powerFormat:SetRelativeWidth(0.5)
-    powerFormat:SetCallback("OnValueChanged", function(_, _, value) save("powerTextFormat", value) end)
-    container:AddChild(powerFormat)
+        local dropdown = AceGUI:Create("Dropdown")
+        dropdown:SetLabel(group.key .. " Tags")
+        dropdown:SetList(list, order)
+        dropdown:SetValue(nil)
+        dropdown:SetRelativeWidth(0.5)
+        dropdown:SetCallback("OnValueChanged", function(widget, _, value)
+            tag.tag = tag.tag .. "[" .. value .. "]"
+            editBox:SetText(tag.tag)
+            save("tag", tag.tag)
+            onLabelChanged()
+            widget:SetValue(nil)
+        end)
+        insert:AddChild(dropdown)
+    end
+end
 
-    local power = AceGUI:Create("CheckBox")
-    power:SetLabel("Show Power Text")
-    power:SetValue(getSaved(savedUnit, "showPowerText") ~= false)
-    power:SetRelativeWidth(0.5)
-    power:SetCallback("OnValueChanged", function(_, _, value) save("showPowerText", value) end)
-    container:AddChild(power)
+-- The slot list has to show what is in each slot: the health readout lives in slot two
+-- by default, and "Tag Two" alone gives the user no way to guess that.
+local function tagSlotList(unit)
+    local conf = VUF:GetUnitConfig(settingUnit(unit))
+    local list = {}
+    for index = 1, VUF.TAG_SLOTS do
+        local tag = conf.tags[index]
+        local text = tag.tag == "" and "(empty)" or tag.tag:sub(1, 44)
+        if tag.tag ~= "" and tag.enabled == false then text = text .. " — off" end
+        list[index] = TAG_SLOT_NAMES[index] .. " — " .. text
+    end
+    return list
+end
+
+local function addTagSettings(container, unit)
+    local body = AceGUI:Create("SimpleGroup")
+    body:SetLayout("Flow")
+    body:SetFullWidth(true)
+
+    local slot = AceGUI:Create("Dropdown")
+    slot:SetLabel("Tag Slot")
+    slot:SetList(tagSlotList(unit), { 1, 2, 3, 4, 5 })
+    slot:SetValue(1)
+    slot:SetFullWidth(true)
+
+    local function show(index)
+        body:ReleaseChildren()
+        addTagSlotEditor(body, unit, index, function()
+            slot:SetList(tagSlotList(unit), { 1, 2, 3, 4, 5 })
+            slot:SetValue(index)
+        end)
+        body:DoLayout()
+        container:DoLayout()
+    end
+
+    slot:SetCallback("OnValueChanged", function(_, _, value) show(value) end)
+    container:AddChild(slot)
+    container:AddChild(body)
+
+    show(1)
 end
 
 local function addAuraSettings(container, unit)
@@ -858,7 +1027,7 @@ local function addAuraSettings(container, unit)
     }
 
     local function addSlider(target, label, key, low, high, default)
-        local control = AceGUI:Create("Slider")
+        local control = createSlider()
         control:SetLabel(label)
         control:SetSliderValues(low, high, 1)
         control:SetValue(getSaved(savedUnit, key) or default)
@@ -890,15 +1059,20 @@ local function addAuraSettings(container, unit)
         addSlider(target, "Y Offset", prefix .. "Y", -400, 400, yDefault)
     end
 
-    local previewToggle = AceGUI:Create("CheckBox")
-    previewToggle:SetLabel("Preview Frame (auras, cast bar, bars)")
-    previewToggle:SetValue(VUF:IsPreviewing(unit))
-    previewToggle:SetFullWidth(true)
-    previewToggle:SetCallback("OnValueChanged", function(widget, _, value)
-        VUF:SetUnitPreview(unit, value)
-        widget:SetValue(VUF:IsPreviewing(unit))
+    local stack = AceGUI:Create("CheckBox")
+    stack:SetLabel("Stack Auras Above Tag One")
+    stack:SetValue(VUF:GetUnitConfig(savedUnit).stackAuras)
+    stack:SetFullWidth(true)
+    stack:SetCallback("OnValueChanged", function(_, _, value)
+        applySetting(unit, "stackAuras", value, VUF.ApplyUnitAuras)
+        VUF:RefreshUnitPreview(unit)
     end)
-    container:AddChild(previewToggle)
+    container:AddChild(stack)
+
+    local stackNote = AceGUI:Create("Label")
+    stackNote:SetText("|cff888888While stacked, buffs sit above tag slot one and debuffs above the buffs. Position is ignored, Buff X/Y move the whole stack, Debuff X shifts that row and Debuff Y is held by the stack gap. Untick to anchor both against the frame instead.|r")
+    stackNote:SetFullWidth(true)
+    container:AddChild(stackNote)
 
     local buffs = AceGUI:Create("InlineGroup")
     buffs:SetTitle("Buffs")
@@ -966,7 +1140,7 @@ local function addAuraSettings(container, unit)
         end)
         container:AddChild(feedback)
 
-        local alpha = AceGUI:Create("Slider")
+        local alpha = createSlider()
         alpha:SetLabel("Frame Color Opacity")
         alpha:SetSliderValues(0, 1, 0.05)
         alpha:SetValue(getSaved(savedUnit, "dispelAlpha") or 0.55)
@@ -993,23 +1167,21 @@ local function addFeedbackSettings(container, unit)
         widget:SetCallback("OnValueConfirmed", saveValue)
     end
 
-    if unit ~= "target" then
-        local targetGlow = AceGUI:Create("CheckBox")
-        targetGlow:SetLabel("Target Glow")
-        targetGlow:SetValue(getSaved(savedUnit, "targetGlow") ~= false)
-        targetGlow:SetFullWidth(true)
-        targetGlow:SetCallback("OnValueChanged", function(_, _, value) save("targetGlow", value) end)
-        container:AddChild(targetGlow)
+    local targetGlow = AceGUI:Create("CheckBox")
+    targetGlow:SetLabel("Target Glow")
+    targetGlow:SetValue(getSaved(savedUnit, "targetGlow") ~= false)
+    targetGlow:SetFullWidth(true)
+    targetGlow:SetCallback("OnValueChanged", function(_, _, value) save("targetGlow", value) end)
+    container:AddChild(targetGlow)
 
-        local targetColor = getSaved(savedUnit, "targetGlowColor") or { 1, 1, 1, 0.9 }
-        local targetGlowColor = AceGUI:Create("ColorPicker")
-        targetGlowColor:SetLabel("Target Glow Color")
-        targetGlowColor:SetColor(targetColor[1], targetColor[2], targetColor[3], targetColor[4])
-        targetGlowColor:SetHasAlpha(true)
-        targetGlowColor:SetFullWidth(true)
-        saveColor(targetGlowColor, "targetGlowColor")
-        container:AddChild(targetGlowColor)
-    end
+    local targetColor = getSaved(savedUnit, "targetGlowColor") or { 1, 1, 1, 0.9 }
+    local targetGlowColor = AceGUI:Create("ColorPicker")
+    targetGlowColor:SetLabel("Target Glow Color")
+    targetGlowColor:SetColor(targetColor[1], targetColor[2], targetColor[3], targetColor[4])
+    targetGlowColor:SetHasAlpha(true)
+    targetGlowColor:SetFullWidth(true)
+    saveColor(targetGlowColor, "targetGlowColor")
+    container:AddChild(targetGlowColor)
 
     local mouseoverGlow = AceGUI:Create("CheckBox")
     mouseoverGlow:SetLabel("Mouseover Glow")
@@ -1029,7 +1201,7 @@ local function addFeedbackSettings(container, unit)
 
 
     if unit ~= "player" then
-        local range = AceGUI:Create("Slider")
+        local range = createSlider()
         range:SetLabel("Out-of-Range Opacity")
         range:SetSliderValues(0.1, 1, 0.05)
         range:SetValue(getSaved(savedUnit, "rangeAlpha") or 0.45)
@@ -1081,7 +1253,7 @@ local function addUnitTab(container, unit)
     local sections = {
         { text = "Layout", value = "layout" },
         { text = "Bars", value = "bars" },
-        { text = "Text", value = "text" },
+        { text = "Tags", value = "text" },
         { text = "Feedback", value = "feedback" },
         { text = "Indicators", value = "indicators" },
     }
@@ -1095,7 +1267,7 @@ local function addUnitTab(container, unit)
         layout = addLayoutSettings,
         bars = addBarsSettings,
         cast = addCastSettings,
-        text = addTextSettings,
+        text = addTagSettings,
         auras = addAuraSettings,
         feedback = addFeedbackSettings,
         indicators = addIndicatorSettings,
@@ -1108,6 +1280,7 @@ local function addUnitTab(container, unit)
     tabs:SetFullWidth(true)
     tabs:SetFullHeight(true)
     tabs:SetCallback("OnGroupSelected", function(panel, _, section)
+        VUF.moverCallback = nil
         panel:ReleaseChildren()
         local scroll = AceGUI:Create("ScrollFrame")
         scroll:SetLayout("Flow")
@@ -1115,7 +1288,14 @@ local function addUnitTab(container, unit)
         scroll:SetFullHeight(true)
         closeDropdownOnScroll(scroll)
         panel:AddChild(scroll)
+        addPreviewToggle(scroll, unit)
+        addDragToggle(scroll)
+        addSpacer(scroll, 6)
         builders[section](scroll, unit)
+        -- InlineGroups only learn their real height once they have children, and the
+        -- scroll frame last measured them while they were still empty stubs. Without
+        -- this the scroll range stops short and the last group is unreachable.
+        scroll:DoLayout()
     end)
     container:AddChild(tabs)
     tabs:SelectTab("layout")
@@ -1245,19 +1425,29 @@ local function addColoursSettings(container)
 
     local colours = getColours()
 
-    addHeading(container, "Power Colors")
-    for powerType, name in pairs(POWER_NAMES) do
-        if colours.Power[powerType] then
-            addColorRow(container, name, "Power", colours.Power, powerType)
+    -- POWER_NAMES mixes numeric ids with oUF's string-keyed fake powers, so pairs() order
+    -- is arbitrary; sort numbers first, then names, to keep rows stable between openings.
+    local function sortedPowerTypes(source)
+        local keys = {}
+        for powerType in pairs(POWER_NAMES) do
+            if source[powerType] then keys[#keys + 1] = powerType end
         end
+        table.sort(keys, function(a, b)
+            if type(a) == type(b) then return a < b end
+            return type(a) == "number"
+        end)
+        return keys
+    end
+
+    addHeading(container, "Power Colors")
+    for _, powerType in ipairs(sortedPowerTypes(colours.Power)) do
+        addColorRow(container, POWER_NAMES[powerType], "Power", colours.Power, powerType)
     end
 
     addSpacer(container, 8)
     addHeading(container, "Secondary Power Colors")
-    for powerType, name in pairs(POWER_NAMES) do
-        if colours.SecondaryPower[powerType] then
-            addColorRow(container, name, "SecondaryPower", colours.SecondaryPower, powerType)
-        end
+    for _, powerType in ipairs(sortedPowerTypes(colours.SecondaryPower)) do
+        addColorRow(container, POWER_NAMES[powerType], "SecondaryPower", colours.SecondaryPower, powerType)
     end
 
     addSpacer(container, 8)
@@ -1335,7 +1525,7 @@ local function addGeneralTab(container)
     end)
     scaleGroup:AddChild(enabled)
 
-    local slider = AceGUI:Create("Slider")
+    local slider = createSlider()
     slider:SetLabel("Scale")
     slider:SetSliderValues(0.3, 1.5, 0.01)
     slider:SetValue(uiScale.Scale)
@@ -1409,7 +1599,7 @@ local function addVisualsTab(container)
     font:SetCallback("OnValueChanged", function(_, _, value) save("font", value) end)
     container:AddChild(font)
 
-    local size = AceGUI:Create("Slider")
+    local size = createSlider()
     size:SetLabel("Font Size")
     size:SetSliderValues(8, 22, 1)
     size:SetValue(VUF:GetVisual("fontSize"))
@@ -1425,14 +1615,6 @@ local function addVisualsTab(container)
     outline:SetCallback("OnValueChanged", function(_, _, value) save("fontOutline", value) end)
     container:AddChild(outline)
 
-    local healthFormat = AceGUI:Create("Dropdown")
-    healthFormat:SetLabel("Health Text Format")
-    healthFormat:SetList(HEALTH_FORMAT_LABELS)
-    healthFormat:SetValue(VUF:GetVisual("healthFormat"))
-    healthFormat:SetFullWidth(true)
-    healthFormat:SetCallback("OnValueChanged", function(_, _, value) save("healthFormat", value) end)
-    container:AddChild(healthFormat)
-
     addSpacer(container, 8)
     addHeading(container, "Dark Minimal Style")
     addSpacer(container, 4)
@@ -1446,7 +1628,7 @@ local function addVisualsTab(container)
     backgroundColor:SetCallback("OnValueChanged", function(_, _, r, g, b) save("backgroundColor", { r, g, b, 1 }) end)
     container:AddChild(backgroundColor)
 
-    local backgroundAlpha = AceGUI:Create("Slider")
+    local backgroundAlpha = createSlider()
     backgroundAlpha:SetLabel("Bar Background Opacity")
     backgroundAlpha:SetSliderValues(0, 1, 0.05)
     backgroundAlpha:SetValue(VUF:GetVisual("backgroundAlpha"))
@@ -1458,7 +1640,7 @@ local function addVisualsTab(container)
     addHeading(container, "Border")
     addSpacer(container, 4)
 
-    local borderSize = AceGUI:Create("Slider")
+    local borderSize = createSlider()
     borderSize:SetLabel("Border Thickness (0 = off)")
     borderSize:SetSliderValues(0, 4, 1)
     borderSize:SetValue(VUF:GetVisual("borderSize"))
@@ -1500,6 +1682,7 @@ function VUF:OpenConfigWindow()
     frame:EnableResize(false)
     frame:SetLayout("Fill")
     frame:SetCallback("OnClose", function(widget)
+        VUF.moverCallback = nil
         AceGUI:Release(widget)
         VUF.configWindow = nil
     end)
@@ -1511,6 +1694,7 @@ function VUF:OpenConfigWindow()
     root:SetTreeWidth(220, false)
     root:SetTree(UNIT_TABS)
     root:SetCallback("OnGroupSelected", function(widget, _, group)
+        VUF.moverCallback = nil
         widget:ReleaseChildren()
         if group ~= "general" and group ~= "visuals" and group ~= "profiles" then
             addUnitTab(widget, group)
@@ -1530,6 +1714,7 @@ function VUF:OpenConfigWindow()
         else
             addProfilesTab(scroll)
         end
+        scroll:DoLayout()
     end)
     frame:AddChild(root)
     root:SelectByValue("general")

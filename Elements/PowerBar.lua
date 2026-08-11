@@ -12,14 +12,8 @@ function VUF:CreatePowerBar(frame)
     bg:SetAlpha(VUF:GetVisual("backgroundAlpha"))
     pb.bg = bg
 
-    local text = pb:CreateFontString(nil, "OVERLAY")
-    VUF:ApplyFont(text)
-    text:SetPoint("CENTER")
-    pb.Value = text
-
     pb.colorPower = true
     pb.frequentUpdates = true
 
     frame.Power = pb
-    frame:Tag(text, VUF.POWER_FORMATS.full)
 end

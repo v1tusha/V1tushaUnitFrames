@@ -28,7 +28,7 @@ VUF.CAST_DEFAULTS = {
 
 -- Same source as the health bar so custom reaction/class colours carry over.
 local function classColor(unit)
-    local colors = oUF and oUF.colors
+    local colors = VUF.oUF and VUF.oUF.colors
     if not (colors and unit and UnitExists(unit)) then return end
     if UnitIsPlayer(unit) then
         local _, class = UnitClass(unit)
@@ -51,22 +51,29 @@ local function applyLatency(cb)
 end
 
 -- oUF fires PostCastStart for both casts and channels, so one colour hook covers both.
+-- notInterruptible is a *secret* value for units we don't control: reading it in an `if`
+-- throws, which aborted CastStart before element:Show() and killed target/boss bars.
+-- SetVertexColorFromBoolean is the sanctioned branch, same as oUF does for the Shield.
 local function refreshColor(cb)
     local conf = cb.vufConf
     if not conf then return end
 
     local r, g, b
-    if cb.notInterruptible then
-        r, g, b = conf.notInterruptibleColor[1], conf.notInterruptibleColor[2], conf.notInterruptibleColor[3]
-    elseif conf.castClassColor then
+    if conf.castClassColor then
         r, g, b = classColor(cb.vufUnit)
     end
     if not r then
         local c = cb.channeling and conf.channelColor or conf.castColor
         r, g, b = c[1], c[2], c[3]
     end
-
     cb:SetStatusBarColor(r, g, b)
+
+    -- casting/channeling/empowering are plain booleans; only then is notInterruptible set.
+    if cb.casting or cb.channeling or cb.empowering then
+        local n = conf.notInterruptibleColor
+        cb:GetStatusBarTexture():SetVertexColorFromBoolean(cb.notInterruptible,
+            CreateColor(n[1], n[2], n[3]), CreateColor(r, g, b))
+    end
     applyLatency(cb)
 end
 

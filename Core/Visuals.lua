@@ -70,6 +70,19 @@ local SECONDARY_POWER_COLORS = {
     [12] = { 0.71, 1,    0.92 },  -- Chi
     [16] = { 0.41, 0.8,  0.94 },  -- Arcane Charges
     [19] = { 100/255, 173/255, 206/255 }, -- Essence
+    -- oUF's fake power types: string keys, deliberately no numeric id (colors.lua).
+    TIP_OF_THE_SPEAR = { 108/255, 188/255, 40/255  },  -- Survival Hunter
+    ICICLES          = { 116/255, 217/255, 246/255 },  -- Frost Mage
+}
+
+-- oUF resolves power colours by token (colors.power.MANA), not by numeric id, so custom
+-- colours have to be written to the token or nothing changes. Fakes are their own token.
+local POWER_TOKENS = {
+    [0]  = "MANA",        [1]  = "RAGE",        [2]  = "FOCUS",       [3]  = "ENERGY",
+    [4]  = "COMBO_POINTS",[5]  = "RUNES",       [6]  = "RUNIC_POWER", [7]  = "SOUL_SHARDS",
+    [8]  = "LUNAR_POWER", [9]  = "HOLY_POWER",  [11] = "MAELSTROM",   [12] = "CHI",
+    [13] = "INSANITY",    [16] = "ARCANE_CHARGES", [17] = "FURY",     [18] = "PAIN",
+    [19] = "ESSENCE",
 }
 
 local REACTION_COLORS = {
@@ -109,6 +122,8 @@ local POWER_NAMES = {
     [17] = "Fury",
     [18] = "Pain",
     [19] = "Essence",
+    TIP_OF_THE_SPEAR = "Tip of the Spear",
+    ICICLES = "Icicles",
 }
 
 local REACTION_NAMES = {
@@ -167,6 +182,13 @@ local function ensureColours()
     profile.general.Colours.SecondaryPower = profile.general.Colours.SecondaryPower or {}
     profile.general.Colours.Reaction = profile.general.Colours.Reaction or {}
     profile.general.Colours.Dispel = profile.general.Colours.Dispel or {}
+    -- Backfill power types added after a profile was first written, otherwise the
+    -- config tab has no row for them and they can never be recoloured.
+    for powerType, color in pairs(SECONDARY_POWER_COLORS) do
+        if not profile.general.Colours.SecondaryPower[powerType] then
+            profile.general.Colours.SecondaryPower[powerType] = { color[1], color[2], color[3] }
+        end
+    end
     return profile.general.Colours
 end
 
@@ -245,20 +267,23 @@ function VUF:LoadCustomColours()
 
     local colours = ensureColours()
 
-    for powerType, color in pairs(colours.Power) do
+    -- powerType is either a numeric id or, for oUF's fake powers, the token itself.
+    local function applyPower(powerType, color)
         local name = POWER_NAMES[powerType]
-        if name then
-            oUF.colors.power[name] = oUF:CreateColor(color[1], color[2], color[3])
-            oUF.colors.power[powerType] = oUF.colors.power[name]
-        end
+        if not name then return end
+        local c = oUF:CreateColor(color[1], color[2], color[3])
+        oUF.colors.power[name] = c
+        oUF.colors.power[powerType] = c
+        local token = POWER_TOKENS[powerType] or (type(powerType) == "string" and powerType)
+        if token then oUF.colors.power[token] = c end
+    end
+
+    for powerType, color in pairs(colours.Power) do
+        applyPower(powerType, color)
     end
 
     for powerType, color in pairs(colours.SecondaryPower) do
-        local name = POWER_NAMES[powerType]
-        if name then
-            oUF.colors.power[name] = oUF:CreateColor(color[1], color[2], color[3])
-            oUF.colors.power[powerType] = oUF.colors.power[name]
-        end
+        applyPower(powerType, color)
     end
 
     for reaction, color in pairs(colours.Reaction) do
@@ -297,10 +322,6 @@ function VUF:ApplyFont(fs, size)
     local outline = VUF:GetVisual("fontOutline")
     if path and fontSize then fs:SetFont(path, fontSize, outline == "NONE" and "" or outline) end
     fs:SetShadowOffset(1, -1)
-end
-
-function VUF:GetHealthTag()
-    return HEALTH_FORMATS[VUF:GetVisual("healthFormat")] or HEALTH_FORMATS.full
 end
 
 function VUF:CreateBorder(frame)
@@ -376,7 +397,7 @@ function VUF:ApplyVisuals()
             end
         end
 
-        for _, text in pairs({ frame.Name, frame.Health and frame.Health.Value, frame.Power and frame.Power.Value, frame.Castbar and frame.Castbar.Text, frame.Castbar and frame.Castbar.Time }) do
+        for _, text in pairs({ frame.Castbar and frame.Castbar.Text, frame.Castbar and frame.Castbar.Time }) do
             if text then VUF:ApplyFont(text) end
         end
     end

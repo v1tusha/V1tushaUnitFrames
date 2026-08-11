@@ -12,8 +12,9 @@ local function externalTex(frame, size)
     return t
 end
 
+-- Health clips its children (heal prediction), so anything anchored outside must sit on the frame.
 function VUF:CreateRaidTargetIndicator(frame)
-    local t = healthTex(frame, 18)
+    local t = externalTex(frame, 18)
     t:SetPoint("LEFT", frame, "RIGHT", 4, 0)
     frame.RaidTargetIndicator = t
 end
