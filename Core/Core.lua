@@ -46,7 +46,8 @@ SlashCmdList["VUF"] = function(msg)
     elseif cmd == "config" or cmd == "c" or cmd == nil then
         VUF:OpenConfigWindow()
     else
-        print("|cFF8080FFV1tushaUnitFrames|r v0.1.0")
+        -- Version lives in the .toc only, so a release bump cannot drift from the code.
+        print("|cFF8080FFV1tushaUnitFrames|r v" .. (C_AddOns.GetAddOnMetadata("V1tushaUnitFrames", "Version") or "?"))
         print("  /vuf         — open config window")
         print("  /vuf unlock  — show movers, drag frames")
         print("  /vuf lock    — hide movers")

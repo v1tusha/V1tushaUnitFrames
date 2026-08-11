@@ -1,0 +1,35 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      # Check out into a folder named after the addon. WoW only loads an addon whose
+      # folder name matches the .toc, and GitHub's own source zips unpack as
+      # V1tushaUnitFrames-<ref> — which is exactly what we are avoiding here.
+      - uses: actions/checkout@v4
+        with:
+          path: V1tushaUnitFrames
+
+      - name: Build addon zip
+        run: |
+          rm -rf V1tushaUnitFrames/.git V1tushaUnitFrames/.github V1tushaUnitFrames/.gitignore
+          zip -qr "V1tushaUnitFrames-${GITHUB_REF_NAME}.zip" V1tushaUnitFrames
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            "V1tushaUnitFrames-${GITHUB_REF_NAME}.zip"

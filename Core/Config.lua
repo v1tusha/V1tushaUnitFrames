@@ -1675,7 +1675,7 @@ function VUF:OpenConfigWindow()
     local frame = AceGUI:Create("Frame")
     VUF.configWindow = frame
     frame:SetTitle("V1tushaUnitFrames")
-    frame:SetStatusText("v0.1.0 — /vuf для команд")
+    frame:SetStatusText("v" .. (C_AddOns.GetAddOnMetadata("V1tushaUnitFrames", "Version") or "?") .. " — /vuf для команд")
     frame:SetStatusTable({ width = 900, height = 650 })
     frame:SetWidth(900)
     frame:SetHeight(650)
