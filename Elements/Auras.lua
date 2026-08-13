@@ -55,6 +55,12 @@ function VUF:GetCooldownText()
         breakpoint.style = STYLE_FORMATS[breakpoint.style] and breakpoint.style or defaults.style
         breakpoint.color = type(breakpoint.color) == "table" and breakpoint.color or { unpack(defaults.color) }
     end
+    -- No UI adds breakpoints past the defaults; an imported/downgraded profile carrying
+    -- extras would reach RefreshCooldownText unsanitised (unknown style -> nil-index), so
+    -- clamp to the known set here where every consumer routes through.
+    for i = #settings.Breakpoints, #DEFAULT_BREAKPOINTS + 1, -1 do
+        settings.Breakpoints[i] = nil
+    end
     return settings
 end
 

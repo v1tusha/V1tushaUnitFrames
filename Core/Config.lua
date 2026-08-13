@@ -164,6 +164,46 @@ local function applyBossIndicator(key, value)
     for i = 1, 8 do setIndicator("boss" .. i, key, value) end
 end
 
+local function deepcopy(value)
+    if type(value) ~= "table" then return value end
+    local out = {}
+    for k, v in pairs(value) do out[k] = deepcopy(v) end
+    return out
+end
+
+-- Keys that reference a unit's own place on screen / parent frame. Copying them from
+-- another unit would slam the frame onto the source or parent its cast bar to the wrong
+-- frame, so we keep the destination's own values for these.
+local COPY_SKIP = {
+    parent = true, anchorFrom = true, anchorTo = true, x = true, y = true,
+    strata = true, enabled = true, castParent = true,
+}
+
+local function copyUnitConfig(fromUnit, toUnit)
+    local db = ensureDB()
+    local src = db.units[fromUnit]
+    if not src then
+        print("|cff33ff99V1tushaUnitFrames|r: " .. fromUnit .. " has no custom settings to copy.")
+        return
+    end
+    local dst = db.units[toUnit] or {}
+    local new = deepcopy(src)
+    for key in pairs(COPY_SKIP) do new[key] = dst[key] end
+    db.units[toUnit] = new
+    VUF:ApplyUnitLayout(toUnit)
+end
+
+StaticPopupDialogs["VUF_COPY_FROM_PLAYER"] = {
+    text = "Copy all Player settings onto the Target frame?|n|nThis overwrites the Target's current settings. Its position stays where it is.",
+    button1 = YES,
+    button2 = CANCEL,
+    OnAccept = function(self) if self.data then self.data() end end,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    preferredIndex = 3,
+}
+
 local function defaultsFor(unit)
     return VUF.UNIT_DEFAULTS and VUF.UNIT_DEFAULTS[unit == "boss" and "boss1" or unit]
 end
@@ -190,23 +230,41 @@ local function addHeading(container, text)
     container:AddChild(heading)
 end
 
-local function addPreviewToggle(container, unit)
+-- Each tab previews its own subject. Layout owns the "fill the bars" frame preview; the
+-- Bars tab shares that state (preview persists across tabs) so it needs no toggle of its own.
+-- The auras tab has no entry — it owns two toggles, one per row, added inside its groups.
+local PREVIEW_PART = {
+    layout = "frame",
+    text = "tags", feedback = "feedback", indicators = "indicators",
+    cast = "cast",
+}
+local PREVIEW_LABEL = {
+    frame = "Preview Frame — fill the bars",
+    tags = "Preview Tags — sample text in every slot",
+    feedback = "Preview Feedback — force the glows and dispel tint on",
+    indicators = "Preview Indicators — raid mark, leader, resting, PvP, quest",
+    cast = "Preview Cast Bar — fake cast on a loop",
+    buffs = "Preview Buffs — fake icons in this row",
+    debuffs = "Preview Debuffs — fake icons in this row",
+}
+
+local function addPreviewToggle(container, unit, part)
     local preview = AceGUI:Create("CheckBox")
-    preview:SetLabel(unit == "boss" and "Preview Boss Frames" or "Preview Frame (auras, cast bar, bars)")
-    preview:SetValue(VUF:IsPreviewing(unit))
+    preview:SetLabel(PREVIEW_LABEL[part] .. (unit == "boss" and " (all boss frames)" or ""))
+    preview:SetValue(VUF:IsPreviewing(unit, part))
     preview:SetRelativeWidth(0.5)
     preview:SetCallback("OnValueChanged", function(widget, _, value)
-        VUF:SetUnitPreview(unit, value)
-        widget:SetValue(VUF:IsPreviewing(unit))
+        VUF:SetUnitPreview(unit, part, value)
+        widget:SetValue(VUF:IsPreviewing(unit, part))
     end)
     container:AddChild(preview)
 end
 
-local function addDragToggle(container)
+local function addDragToggle(container, width)
     local drag = AceGUI:Create("CheckBox")
     drag:SetLabel("Unlock — drag frames with the mouse")
     drag:SetValue(VUF.moversUnlocked)
-    drag:SetRelativeWidth(0.5)
+    drag:SetRelativeWidth(width or 0.5)
     drag:SetCallback("OnValueChanged", function(widget)
         VUF:ToggleMovers()
         widget:SetValue(VUF.moversUnlocked)
@@ -392,6 +450,23 @@ local function addLayoutSettings(container, unit)
         addLayoutSettings(container, unit)
     end)
     container:AddChild(resetLayout)
+
+    if unit == "target" then
+        local copyBtn = AceGUI:Create("Button")
+        copyBtn:SetText("Copy All Settings from Player")
+        copyBtn:SetFullWidth(true)
+        copyBtn:SetCallback("OnClick", function()
+            local dialog = StaticPopup_Show("VUF_COPY_FROM_PLAYER")
+            if dialog then
+                dialog.data = function()
+                    copyUnitConfig("player", unit)
+                    container:ReleaseChildren()
+                    addLayoutSettings(container, unit)
+                end
+            end
+        end)
+        container:AddChild(copyBtn)
+    end
 
     addSpacer(container, 6)
     local note = AceGUI:Create("Label")
@@ -1088,6 +1163,7 @@ local function addAuraSettings(container, unit)
         applySetting(unit, "showBuffs", value, VUF.ApplyUnitElements)
     end)
     buffs:AddChild(buffsVisible)
+    addPreviewToggle(buffs, unit, "buffs")
 
     addAuraControls(buffs, "Buffs", "buff", 16, 4)
     local ownBuffs = AceGUI:Create("CheckBox")
@@ -1113,6 +1189,7 @@ local function addAuraSettings(container, unit)
         applySetting(unit, "showDebuffs", value, VUF.ApplyUnitElements)
     end)
     debuffs:AddChild(debuffsVisible)
+    addPreviewToggle(debuffs, unit, "debuffs")
 
     addAuraControls(debuffs, "Debuffs", "debuff", 12, 30)
     if unit == "target" then
@@ -1214,32 +1291,89 @@ end
 local function addIndicatorSettings(container, unit)
     local boss = isBoss(unit)
     local savedUnit = settingUnit(unit)
-    local function addIndicator(label, key)
-        local control = AceGUI:Create("CheckBox")
-        control:SetLabel(label)
-        control:SetValue(getIndicator(savedUnit, key) ~= false)
-        control:SetFullWidth(true)
-        control:SetCallback("OnValueChanged", function(_, _, value)
-            if boss then
-                applyBossIndicator(key, value)
-                VUF:ApplyBossLayouts()
-            else
-                setIndicator(unit, key, value)
-                VUF:ApplyUnitIndicators(unit)
-            end
-        end)
-        container:AddChild(control)
+
+    local function saveInd(key, value)
+        if boss then
+            applyBossIndicator(key, value)
+            VUF:ApplyBossLayouts()
+        else
+            setIndicator(unit, key, value)
+            VUF:ApplyUnitIndicators(unit)
+        end
+        VUF:RefreshUnitPreview(unit)
     end
 
+    local function addIndicator(label, key)
+        local defaults = VUF.INDICATOR_DEFAULTS[key]
+
+        -- Classification is a font string, not a positioned texture: enable toggle only.
+        if not defaults then
+            local control = AceGUI:Create("CheckBox")
+            control:SetLabel(label)
+            control:SetValue(getIndicator(savedUnit, key) ~= false)
+            control:SetFullWidth(true)
+            control:SetCallback("OnValueChanged", function(_, _, value) saveInd(key, value) end)
+            container:AddChild(control)
+            return
+        end
+
+        local group = AceGUI:Create("InlineGroup")
+        group:SetTitle(label)
+        group:SetLayout("Flow")
+        group:SetFullWidth(true)
+        container:AddChild(group)
+
+        local enabled = AceGUI:Create("CheckBox")
+        enabled:SetLabel("Enabled")
+        enabled:SetValue(getIndicator(savedUnit, key) ~= false)
+        enabled:SetFullWidth(true)
+        enabled:SetCallback("OnValueChanged", function(_, _, value) saveInd(key, value) end)
+        group:AddChild(enabled)
+
+        local anchor = AceGUI:Create("Dropdown")
+        anchor:SetLabel("Anchor")
+        anchor:SetList(ANCHOR_POINTS)
+        anchor:SetValue(getIndicator(savedUnit, key .. "Anchor") or defaults.anchor)
+        anchor:SetRelativeWidth(0.5)
+        anchor:SetCallback("OnValueChanged", function(_, _, value) saveInd(key .. "Anchor", value) end)
+        group:AddChild(anchor)
+
+        local size = createSlider()
+        size:SetLabel("Size")
+        size:SetSliderValues(6, 48, 1)
+        size:SetValue(getIndicator(savedUnit, key .. "Size") or defaults.size)
+        size:SetRelativeWidth(0.5)
+        size:SetCallback("OnValueChanged", function(_, _, value) saveInd(key .. "Size", math.floor(value)) end)
+        group:AddChild(size)
+
+        local x = createSlider()
+        x:SetLabel("X Offset")
+        x:SetSliderValues(-400, 400, 1)
+        x:SetValue(getIndicator(savedUnit, key .. "X") or defaults.x)
+        x:SetRelativeWidth(0.5)
+        x:SetCallback("OnValueChanged", function(_, _, value) saveInd(key .. "X", math.floor(value)) end)
+        group:AddChild(x)
+
+        local y = createSlider()
+        y:SetLabel("Y Offset")
+        y:SetSliderValues(-400, 400, 1)
+        y:SetValue(getIndicator(savedUnit, key .. "Y") or defaults.y)
+        y:SetRelativeWidth(0.5)
+        y:SetCallback("OnValueChanged", function(_, _, value) saveInd(key .. "Y", math.floor(value)) end)
+        group:AddChild(y)
+    end
+
+    -- Config gates must match the creation gates in UnitFrame.lua: raid marker, leader,
+    -- assistant and PvP are created for every unit, so they get a setting everywhere too.
     addIndicator("Raid Target Marker", "raidMarker")
+    addIndicator("Leader Icon", "leader")
+    addIndicator("Assistant Icon", "assistant")
+    addIndicator("PvP Icon", "pvp")
     if unit == "player" or unit == "target" then
-        addIndicator("Leader Icon", "leader")
-        addIndicator("Assistant Icon", "assistant")
         addIndicator("Combat Icon", "combat")
     end
     if unit == "player" then
         addIndicator("Resting Icon", "resting")
-        addIndicator("PvP Icon", "pvp")
     end
     if unit == "target" or unit == "focus" then
         addIndicator("Quest Icon", "quest")
@@ -1288,9 +1422,11 @@ local function addUnitTab(container, unit)
         scroll:SetFullHeight(true)
         closeDropdownOnScroll(scroll)
         panel:AddChild(scroll)
-        addPreviewToggle(scroll, unit)
-        addDragToggle(scroll)
-        addSpacer(scroll, 6)
+        local part = PREVIEW_PART[section]
+        if part then
+            addPreviewToggle(scroll, unit, part)
+            addSpacer(scroll, 6)
+        end
         builders[section](scroll, unit)
         -- InlineGroups only learn their real height once they have children, and the
         -- scroll frame last measured them while they were still empty stubs. Without
@@ -1480,6 +1616,8 @@ local function addGeneralTab(container)
     actions:SetLayout("Flow")
     actions:SetFullWidth(true)
     container:AddChild(actions)
+
+    addDragToggle(actions, 1)
 
     local reset = AceGUI:Create("Button")
     reset:SetText("Reset All Positions")

@@ -4,7 +4,8 @@ local COLOR = { 1.0, 1.0, 1.0, 0.9 }
 local THICKNESS = 2
 
 local function edge(parent, a1, a2, dim)
-    local t = parent:CreateTexture(nil, "OVERLAY", nil, 7)
+    -- sublevel 6 (below MouseoverGlow's 7) so hovering the target shows the mouseover glow.
+    local t = parent:CreateTexture(nil, "OVERLAY", nil, 6)
     t:SetColorTexture(COLOR[1], COLOR[2], COLOR[3], COLOR[4])
     if dim == "h" then t:SetHeight(THICKNESS) else t:SetWidth(THICKNESS) end
     if dim == "h" then

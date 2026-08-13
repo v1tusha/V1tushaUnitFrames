@@ -2,6 +2,9 @@ local _, VUF = ...
 
 -- ponytail: preview forces the real frames visible and mutes the oUF elements that
 -- would otherwise wipe the fake children. Everything here is out-of-combat only.
+-- VUF.preview[unit] is a set of active parts ("frame" / "cast" / "auras"), so previewing
+-- auras does not also start a fake cast. Any active part shows the frame, since a unit
+-- that does not exist is hidden by RegisterUnitWatch and nothing would be visible.
 VUF.preview = {}
 
 local BUFF_ICON = 135769
@@ -119,6 +122,7 @@ local function startFakeCast(frame, conf)
     local cb = frame.Castbar
     if not cb then return end
 
+    cb.vufFakeCast = true
     frame:DisableElement("Castbar")
     cb:SetMinMaxValues(0, 1)
     cb:SetValue(0)
@@ -140,7 +144,13 @@ end
 
 local function stopFakeCast(frame, conf)
     local cb = frame.Castbar
-    if not cb then return end
+    -- Only tear down if we actually started a fake cast. stopFakeCast runs on EVERY preview
+    -- teardown (e.g. toggling indicator preview), and if no fake cast was active the Castbar
+    -- element is still enabled, so EnableElement below returns early (ouf.lua:98) and never
+    -- restores oUF's onUpdate — killing the holdTime->Hide logic so real casts freeze on
+    -- screen forever. Bailing here leaves the live castbar untouched.
+    if not cb or not cb.vufFakeCast then return end
+    cb.vufFakeCast = nil
 
     cb:SetScript("OnUpdate", nil)
     cb.vufFakeElapsed = nil
@@ -148,17 +158,198 @@ local function stopFakeCast(frame, conf)
     if conf.showCastBar then frame:EnableElement("Castbar") end
 end
 
-local function applyPreview(unit, enabled)
+-- Bar values are faked only for an absent unit: it receives no UNIT_HEALTH events, so a
+-- fake value simply stays. A live unit keeps its real bars — muting the element to hold a
+-- fake value is not an option, because oUF's health and power Disable both call
+-- element:Hide() and the bar would vanish (health.lua:614, power.lua:572).
+--
+-- Tag text is faked in both cases, which is what makes this useful on the player: sample
+-- text shows whether the widest value still fits the bar. Untag first, or oUF re-renders
+-- the font string on its own events and wipes the sample.
+local function noop() end
+
+-- Override is oUF's own hook for replacing an element's update (health.lua:357,
+-- power.lua:346). Parking a no-op there freezes the fake value while the bar stays on
+-- screen. DisableElement would hide it — both health and power Disable call element:Hide()
+-- — which is why this preview looked dead on a live unit before.
+local function startFakeBars(frame, conf, unit)
+    local index = tonumber(unit:match("%d+$")) or 1
+    local healthMax, powerMax = 1000000, 100
+
+    -- Never 100%: a full-HP player forced to full looks pixel-identical to reality, so the
+    -- preview reads as "nothing happened". A clearly partial fill is the whole point here.
+    if frame.Health then
+        frame.Health.Override = noop
+        frame.Health:SetMinMaxValues(0, healthMax)
+        frame.Health:SetValue(math.floor(healthMax * (75 - (index - 1) * 9) / 100))
+    end
+    if frame.Power then
+        frame.Power.Override = noop
+        frame.Power:SetMinMaxValues(0, powerMax)
+        frame.Power:SetValue(math.floor(powerMax * (60 - (index - 1) * 7) / 100))
+    end
+end
+
+local function stopFakeBars(frame, conf, unit)
+    if frame.Health then frame.Health.Override = nil end
+    if frame.Power then frame.Power.Override = nil end
+
+    if not UnitExists(unit) then return end
+    if frame.Health and frame.Health.ForceUpdate then frame.Health:ForceUpdate() end
+    if frame.Power and frame.Power.ForceUpdate and conf.showPowerBar then frame.Power:ForceUpdate() end
+end
+
+-- Untag first, or oUF re-renders the font string on its own events and wipes the sample.
+-- Faked for live units too: sample text is how you check the widest value still fits.
+local function startFakeTags(frame, conf, unit)
+    local index = tonumber(unit:match("%d+$")) or 1
+    for slot, fs in ipairs(frame.Tags or {}) do
+        local tag = conf.tags[slot]
+        local sample = previewSample(tag.tag)
+        if unit:sub(1, 4) == "boss" and tag.tag:find("name", 1, true) then sample = "Boss " .. index end
+        frame:Untag(fs)
+        fs:SetText(VUF:IsTagActive(tag) and sample or "")
+    end
+end
+
+local function stopFakeTags(frame, conf, unit)
+    -- ApplyUnitTags, not ApplyUnitText: the latter ends in RefreshUnitPreview and would
+    -- come straight back into here while a preview part is still active.
+    VUF:ApplyUnitTags(unit)
+end
+
+-- The glows and the dispel tint all bail out on a unit that is not your target, not
+-- moused over, or carrying nothing dispellable — none of which you can stage on demand.
+-- Preview drives the textures directly and leaves their Update functions alone.
+local function startFakeFeedback(frame, conf)
+    for _, edges in ipairs({ frame.TargetGlowEdges, frame.MouseoverGlowEdges }) do
+        if edges then
+            local colour = edges == frame.TargetGlowEdges and conf.targetGlowColor or conf.mouseoverGlowColor
+            local shown = edges == frame.TargetGlowEdges and conf.targetGlow or conf.mouseoverGlow
+            for _, e in ipairs(edges) do
+                e:SetColorTexture(colour[1], colour[2], colour[3], colour[4] or 1)
+                e:SetAlpha(shown and 1 or 0)
+            end
+        end
+    end
+    if frame.DispelHighlight and conf.dispelHighlight then
+        -- Dispel is only seeded by ResetColours (the Reset button), so a fresh profile has
+        -- an empty table here; fall back to the shipped Magic default instead of nil-indexing.
+        local magic = VUF:GetColours().Dispel.Magic or { 0.2, 0.6, 1 }
+        frame.DispelHighlight:SetAlpha(conf.dispelAlpha)
+        frame.DispelHighlight:SetVertexColor(magic[1], magic[2], magic[3], 1)
+        frame.DispelHighlight:Show()
+    end
+    if frame.DispelIcon and conf.dispelIcon then
+        frame.DispelIcon:SetTexture(135932)
+        frame.DispelIcon:Show()
+    end
+end
+
+local function stopFakeFeedback(frame)
+    if frame.DispelHighlight then frame.DispelHighlight:Hide() end
+    if frame.DispelIcon then frame.DispelIcon:Hide() end
+    if frame.UpdateTargetGlow then frame:UpdateTargetGlow() end
+    if frame.UpdateMouseoverGlow then frame:UpdateMouseoverGlow() end
+    if frame.UpdateDispelHighlight then frame:UpdateDispelHighlight() end
+end
+
+-- Raid mark 1, leader crown, elite. Every one of these needs group state or a live target
+-- that cannot be conjured, so preview sets the textures itself.
+local FAKE_INDICATORS = {
+    { field = "RaidTargetIndicator", key = "raidMarker", texture = [[Interface\TargetingFrame\UI-RaidTargetingIcons]],
+      coords = { 0, 0.25, 0, 0.25 } },
+    { field = "LeaderIndicator", key = "leader", texture = [[Interface\GroupFrame\UI-Group-LeaderIcon]] },
+    { field = "AssistantIndicator", key = "assistant", texture = [[Interface\GroupFrame\UI-Group-AssistantIcon]] },
+    { field = "CombatIndicator", key = "combat" },
+    { field = "RestingIndicator", key = "resting", texture = [[Interface\CharacterFrame\UI-StateIcon]],
+      coords = { 0, 0.5, 0, 0.42 } },
+    { field = "PvPIndicator", key = "pvp", texture = [[Interface\PVPFrame\PVP-Currency-Alliance]] },
+    { field = "QuestIndicator", key = "quest", texture = [[Interface\TargetingFrame\PortraitQuestBadge]] },
+}
+
+local function startFakeIndicators(frame, conf)
+    for _, entry in ipairs(FAKE_INDICATORS) do
+        local element = frame[entry.field]
+        if element and conf.indicators[entry.key] ~= false then
+            if entry.texture then element:SetTexture(entry.texture) end
+            if entry.coords then element:SetTexCoord(unpack(entry.coords)) end
+            element:Show()
+        end
+    end
+    if frame.ClassificationText and conf.indicators.classification ~= false then
+        frame.ClassificationText:SetText("|cffffcc00E|r")
+    end
+end
+
+local function stopFakeIndicators(frame, unit)
+    for _, entry in ipairs(FAKE_INDICATORS) do
+        local element = frame[entry.field]
+        if element then element:Hide() end
+    end
+    if frame.ClassificationText then frame.ClassificationText:SetText("") end
+    VUF:ApplyUnitIndicators(unit)
+end
+
+-- Buffs and debuffs are previewed independently, but oUF has a single Auras element
+-- feeding both rows: while either row is faked the element has to go, so real auras stop
+-- on both. Faking one row and keeping live auras in the other is not possible.
+-- Rows are laid out whatever Show Buffs / Show Debuffs say — ticking preview is an
+-- explicit request to see a row, which is how you size it before switching it on.
+local function applyFakeAuras(frame, conf, unit, parts)
+    if not (frame.Buffs or frame.Debuffs) then return end
+
+    local faking = parts.buffs or parts.debuffs
+    if faking then frame:DisableElement("Auras") end
+
+    if frame.Buffs then
+        if parts.buffs then
+            frame.Buffs:Show()
+            layoutFakes(frame.Buffs, conf.buffCount, conf.buffSize, conf.buffSpacing, false)
+        else
+            hideFakes(frame.Buffs)
+            frame.Buffs:SetShown(conf.showBuffs)
+        end
+    end
+    if frame.Debuffs then
+        if parts.debuffs then
+            frame.Debuffs:Show()
+            layoutFakes(frame.Debuffs, conf.debuffCount, conf.debuffSize, conf.debuffSpacing, true)
+        else
+            hideFakes(frame.Debuffs)
+            frame.Debuffs:SetShown(conf.showDebuffs)
+        end
+    end
+
+    if not faking and (conf.showBuffs or conf.showDebuffs) then
+        frame:EnableElement("Auras")
+        local auras = frame.Buffs or frame.Debuffs
+        -- oUF only skips absent units inside UpdateAllElements; a direct ForceUpdate does not.
+        if auras and auras.ForceUpdate and UnitExists(unit) then auras:ForceUpdate() end
+    end
+end
+
+local function applyPreview(unit, parts)
     local frame = VUF.frames and VUF.frames[unit]
     local conf = VUF:GetUnitConfig(unit)
     if not frame or not conf then return end
 
-    if not enabled then
-        hideFakes(frame.Buffs)
-        hideFakes(frame.Debuffs)
+    if not next(parts) then
+        stopFakeBars(frame, conf, unit)
+        stopFakeTags(frame, conf, unit)
+        stopFakeFeedback(frame)
+        stopFakeIndicators(frame, unit)
+        applyFakeAuras(frame, conf, unit, parts)
         stopFakeCast(frame, conf)
-        RegisterUnitWatch(frame)
-        if not UnitExists(unit) then frame:Hide() end
+        -- Both calls are blocked in combat: RegisterUnitWatch is a protected SetAttribute,
+        -- and the frame itself is protected (SecureUnitButtonTemplate, ouf.lua:736), so
+        -- Hide() would throw ADDON_ACTION_BLOCKED the moment combat starts. Skipping both
+        -- is safe: ApplyUnitLayout defers via pendingLayouts, and on regen it re-registers
+        -- the watch, which hides the frame for an absent unit anyway.
+        if not InCombatLockdown() then
+            RegisterUnitWatch(frame)
+            if not UnitExists(unit) then frame:Hide() end
+        end
         VUF:ApplyUnitLayout(unit)
         return
     end
@@ -166,49 +357,16 @@ local function applyPreview(unit, enabled)
     UnregisterUnitWatch(frame)
     frame:Show()
 
-    -- Fill bars only when the unit is absent, so live units keep their real values.
-    if not UnitExists(unit) then
-        local index = tonumber(unit:match("%d+$")) or 1
-        local healthMax, powerMax = 1000000, 100
-        local health = math.floor(healthMax * (100 - (index - 1) * 9) / 100)
-        local power = math.floor(powerMax * (85 - (index - 1) * 7) / 100)
+    if parts.frame then startFakeBars(frame, conf, unit) else stopFakeBars(frame, conf, unit) end
+    if parts.tags then startFakeTags(frame, conf, unit) else stopFakeTags(frame, conf, unit) end
+    if parts.feedback then startFakeFeedback(frame, conf) else stopFakeFeedback(frame) end
+    if parts.indicators then startFakeIndicators(frame, conf) else stopFakeIndicators(frame, unit) end
+    applyFakeAuras(frame, conf, unit, parts)
 
-        if frame.Health then
-            frame.Health:SetMinMaxValues(0, healthMax)
-            frame.Health:SetValue(health)
-        end
-        if frame.Power then
-            frame.Power:SetMinMaxValues(0, powerMax)
-            frame.Power:SetValue(power)
-        end
-        for slot, fs in ipairs(frame.Tags or {}) do
-            local tag = conf.tags[slot]
-            local sample = previewSample(tag.tag)
-            if unit:sub(1, 4) == "boss" and tag.tag:find("name", 1, true) then sample = "Boss " .. index end
-            fs:SetText(VUF:IsTagActive(tag) and sample or "")
-        end
-    end
-
-    if conf.showCastBar and frame.Castbar then startFakeCast(frame, conf) end
-
-    if frame.Buffs or frame.Debuffs then
-        frame:DisableElement("Auras")
-        if frame.Buffs then
-            if conf.showBuffs then
-                frame.Buffs:Show()
-                layoutFakes(frame.Buffs, conf.buffCount, conf.buffSize, conf.buffSpacing, false)
-            else
-                hideFakes(frame.Buffs)
-            end
-        end
-        if frame.Debuffs then
-            if conf.showDebuffs then
-                frame.Debuffs:Show()
-                layoutFakes(frame.Debuffs, conf.debuffCount, conf.debuffSize, conf.debuffSpacing, true)
-            else
-                hideFakes(frame.Debuffs)
-            end
-        end
+    if parts.cast and conf.showCastBar and frame.Castbar then
+        startFakeCast(frame, conf)
+    else
+        stopFakeCast(frame, conf)
     end
 end
 
@@ -219,26 +377,40 @@ local function expand(unit)
     return units
 end
 
-function VUF:SetUnitPreview(unit, enabled)
+function VUF:SetUnitPreview(unit, part, enabled)
     if InCombatLockdown() then
         print("|cFF8080FFV1tushaUnitFrames|r: preview cannot change in combat.")
         return
     end
 
-    VUF.preview[unit] = enabled or nil
-    for _, name in ipairs(expand(unit)) do applyPreview(name, enabled) end
+    local parts = VUF.preview[unit] or {}
+    parts[part] = enabled or nil
+    -- Dropped entirely when the last part goes, so RefreshUnitPreview stays a cheap
+    -- nil check and the teardown path below cannot recurse through ApplyUnitLayout.
+    VUF.preview[unit] = next(parts) and parts or nil
+    for _, name in ipairs(expand(unit)) do applyPreview(name, parts) end
+end
+
+function VUF:CancelPreviews()
+    local active = {}
+    for unit in pairs(VUF.preview or {}) do active[#active + 1] = unit end
+
+    for _, unit in ipairs(active) do
+        VUF.preview[unit] = nil
+        for _, name in ipairs(expand(unit)) do applyPreview(name, {}) end
+    end
 end
 
 function VUF:RefreshUnitPreview(unit)
     local key = unit:sub(1, 4) == "boss" and "boss" or unit
-    if not VUF.preview[key] then return end
-    if unit == "boss" then
-        for _, name in ipairs(expand(unit)) do applyPreview(name, true) end
-    else
-        applyPreview(unit, true)
-    end
+    local parts = VUF.preview[key]
+    if not parts then return end
+    for _, name in ipairs(expand(unit)) do applyPreview(name, parts) end
 end
 
-function VUF:IsPreviewing(unit)
-    return VUF.preview[unit] == true
+function VUF:IsPreviewing(unit, part)
+    local parts = VUF.preview[unit]
+    if not parts then return false end
+    if part then return parts[part] == true end
+    return next(parts) ~= nil
 end

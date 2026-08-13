@@ -13,7 +13,12 @@ function addon:OnInitialize()
 
     local events = CreateFrame("Frame")
     events:RegisterEvent("PLAYER_REGEN_ENABLED")
-    events:SetScript("OnEvent", function()
+    events:RegisterEvent("PLAYER_REGEN_DISABLED")
+    events:SetScript("OnEvent", function(_, event)
+        if event == "PLAYER_REGEN_DISABLED" then
+            VUF:CancelPreviews()
+            return
+        end
         if VUF.pendingProfileRefresh then
             VUF.pendingProfileRefresh = nil
             VUF:ApplyProfile()

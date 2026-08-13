@@ -141,15 +141,21 @@ local PREDICTION_DEFAULTS = {
 }
 VUF.PREDICTION_DEFAULTS = PREDICTION_DEFAULTS
 
+-- anchor/x/y/size are the default position: the icon's CENTER is pinned to the frame's
+-- <anchor> point, offset by x/y. Values reproduce the old hardcoded Create* placements.
+-- conf.indicators may override each with key.."Anchor"/"X"/"Y"/"Size".
 local INDICATORS = {
-    { key = "raidMarker", field = "RaidTargetIndicator" },
-    { key = "leader", field = "LeaderIndicator" },
-    { key = "assistant", field = "AssistantIndicator" },
-    { key = "combat", field = "CombatIndicator" },
-    { key = "resting", field = "RestingIndicator" },
-    { key = "pvp", field = "PvPIndicator" },
-    { key = "quest", field = "QuestIndicator" },
+    { key = "raidMarker", field = "RaidTargetIndicator", anchor = "RIGHT",       x = 13,  y = 0,   size = 18 },
+    { key = "leader",     field = "LeaderIndicator",      anchor = "TOPLEFT",    x = 8,   y = -8,  size = 14 },
+    { key = "assistant",  field = "AssistantIndicator",   anchor = "TOPLEFT",    x = 8,   y = -8,  size = 14 },
+    { key = "combat",     field = "CombatIndicator",      anchor = "LEFT",       x = -12, y = 0,   size = 16 },
+    { key = "resting",    field = "RestingIndicator",     anchor = "TOPLEFT",    x = 9,   y = -9,  size = 16 },
+    { key = "pvp",        field = "PvPIndicator",         anchor = "BOTTOMRIGHT",x = -10, y = 10,  size = 16 },
+    { key = "quest",      field = "QuestIndicator",       anchor = "RIGHT",      x = 14,  y = 0,   size = 16 },
 }
+
+VUF.INDICATOR_DEFAULTS = {}
+for _, ind in ipairs(INDICATORS) do VUF.INDICATOR_DEFAULTS[ind.key] = ind end
 
 local function isBossUnit(unit) return unit:sub(1, 4) == "boss" end
 
@@ -411,10 +417,17 @@ function VUF:ApplyUnitIndicators(unit)
     local conf = VUF:GetUnitConfig(unit)
     if not frame or not conf then return end
 
-    for _, definition in ipairs(INDICATORS) do
-        local indicator = definition
+    for _, indicator in ipairs(INDICATORS) do
         local element = frame[indicator.field]
         if element then
+            local ind = conf.indicators
+            element:ClearAllPoints()
+            element:SetPoint("CENTER", frame,
+                ind[indicator.key .. "Anchor"] or indicator.anchor,
+                ind[indicator.key .. "X"] or indicator.x,
+                ind[indicator.key .. "Y"] or indicator.y)
+            local size = ind[indicator.key .. "Size"] or indicator.size
+            element:SetSize(size, size)
             element.PostUpdate = function(self)
                 if conf.indicators[indicator.key] == false then self:Hide() end
             end

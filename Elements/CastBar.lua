@@ -86,6 +86,34 @@ local function endColor(cb, key)
     cb.holdTime = math.max(cb.holdTime or 0, conf.castHoldTime)
 end
 
+-- oUF force-fills the bar to 100% on fail/interrupt (castbar.lua:437) before our hook
+-- runs, so it looks like the cast raced to the end. For our own cast we know the real
+-- progress, so freeze it there. startTime/endTime are set only for the player unit
+-- (castbar.lua:229), which is exactly the self-interrupt case; leave enemy bars as-is
+-- (their progress is secret in Midnight anyway). channeling is still set here — oUF's
+-- resetAttributes runs after the callback.
+local function freezeAtInterrupt(cb)
+    if cb.vufUnit ~= "player" then return end
+    local s, e = cb.startTime, cb.endTime
+    if not (s and e and e > s) then return end
+    local frac = (GetTime() - s) / (e - s)
+    if cb.channeling then frac = 1 - frac end
+    cb:SetMinMaxValues(0, 1)
+    cb:SetValue(math.min(math.max(frac, 0), 1))
+end
+
+-- A self-cancelled cast fires UNIT_SPELLCAST_STOP with no interruptedBy, exactly like a
+-- clean finish, so oUF routes it to PostCastStop (green) and never force-fills — the native
+-- timer just keeps animating to the end. Tell cancel from finish by real progress: for our
+-- own cast startTime/endTime are readable, so a stop with time still left is a cancel.
+-- ponytail: 50ms slop absorbs event latency; a cancel in the final 50ms reads as a clean
+-- finish, which is visually indistinguishable anyway. Enemy stops (no times) stay success.
+local function endedEarly(cb)
+    local s, e = cb.startTime, cb.endTime
+    if not (s and e and e > s) then return false end
+    return e - GetTime() > 0.05
+end
+
 function VUF:CreateCastBar(frame)
     local tex = VUF:GetTexturePath()
     local cb = CreateFrame("StatusBar", nil, frame)
@@ -138,8 +166,15 @@ function VUF:CreateCastBar(frame)
 
     cb.PostCastStart = refreshColor
     cb.PostCastInterruptible = refreshColor
-    cb.PostCastStop = function(bar) endColor(bar, "successColor") end
-    cb.PostCastFail = function(bar) endColor(bar, "interruptedColor") end
+    cb.PostCastStop = function(bar)
+        if endedEarly(bar) then
+            freezeAtInterrupt(bar)
+            endColor(bar, "interruptedColor")
+        else
+            endColor(bar, "successColor")
+        end
+    end
+    cb.PostCastFail = function(bar) freezeAtInterrupt(bar); endColor(bar, "interruptedColor") end
     cb.PostCastInterrupted = cb.PostCastFail
 
     frame.Castbar = cb

@@ -182,13 +182,18 @@ local function ensureColours()
     profile.general.Colours.SecondaryPower = profile.general.Colours.SecondaryPower or {}
     profile.general.Colours.Reaction = profile.general.Colours.Reaction or {}
     profile.general.Colours.Dispel = profile.general.Colours.Dispel or {}
-    -- Backfill power types added after a profile was first written, otherwise the
-    -- config tab has no row for them and they can never be recoloured.
-    for powerType, color in pairs(SECONDARY_POWER_COLORS) do
-        if not profile.general.Colours.SecondaryPower[powerType] then
-            profile.general.Colours.SecondaryPower[powerType] = { color[1], color[2], color[3] }
+    -- Backfill colours added after a profile was first written (or dropped by an
+    -- imported profile): otherwise the config tab has no row for them and they can
+    -- never be recoloured, and readers that index a colour directly nil-error.
+    local function backfill(dest, src)
+        for key, color in pairs(src) do
+            if not dest[key] then dest[key] = { color[1], color[2], color[3] } end
         end
     end
+    backfill(profile.general.Colours.Power, POWER_COLORS)
+    backfill(profile.general.Colours.SecondaryPower, SECONDARY_POWER_COLORS)
+    backfill(profile.general.Colours.Reaction, REACTION_COLORS)
+    backfill(profile.general.Colours.Dispel, DISPEL_COLORS)
     return profile.general.Colours
 end
 

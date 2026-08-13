@@ -4,7 +4,9 @@ local COLOR = { 1.0, 0.9, 0.3, 0.8 }
 local THICKNESS = 2
 
 local function edge(parent, a1, a2, dim)
-    local t = parent:CreateTexture(nil, "OVERLAY", nil, 6)
+    -- sublevel 7 (above TargetGlow's 6): on the target frame the always-on target glow
+    -- would otherwise cover the mouseover glow, which reads as "glow never appears".
+    local t = parent:CreateTexture(nil, "OVERLAY", nil, 7)
     t:SetColorTexture(COLOR[1], COLOR[2], COLOR[3], COLOR[4])
     if dim == "h" then
         t:SetHeight(THICKNESS)
@@ -29,24 +31,28 @@ function VUF:CreateMouseoverGlow(frame, unit)
     frame.MouseoverGlowEdges = edges
 
     local ev = CreateFrame("Frame")
+
+    -- UnitIsUnit can hand back a secret boolean, so we cannot branch on it — poll and let
+    -- the Blizzard API set the alpha. This runs every frame while enabled, so keep it cheap:
+    -- no GetUnitConfig here (it allocates ~90 fields). Colour/enabled only change on a config
+    -- edit, so they are handled in update() instead.
+    local function poll()
+        for _, e in ipairs(edges) do
+            e:SetAlphaFromBoolean(UnitIsUnit("mouseover", unit), 1, 0)
+            if frame:IsMouseOver() then e:SetAlpha(1) end
+        end
+    end
+
     local function update()
         local conf = VUF:GetUnitConfig(unit)
         local enabled = conf and conf.mouseoverGlow ~= false and UnitExists(unit)
-        local unitMatch = enabled and UnitIsUnit("mouseover", unit)
-        local frameHover = frame:IsMouseOver()
         local color = conf and conf.mouseoverGlowColor or COLOR
-
         for _, e in ipairs(edges) do
             e:SetColorTexture(color[1], color[2], color[3], color[4])
-            if enabled then
-                -- UnitIsUnit can return a secret boolean; pass it directly to the Blizzard API.
-                e:SetAlphaFromBoolean(unitMatch, 1, 0)
-                if frameHover then e:SetAlpha(1) end
-            else
-                e:SetAlpha(0)
-            end
+            if not enabled then e:SetAlpha(0) end
         end
-        ev:SetScript("OnUpdate", enabled and update or nil)
+        if enabled then poll() end
+        ev:SetScript("OnUpdate", enabled and poll or nil)
     end
 
     frame.UpdateMouseoverGlow = update
